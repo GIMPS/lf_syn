@@ -1,2 +1,5 @@
 *.h5
 *.png
+.DS_Store
+_pycache_\*
+.idea\*
