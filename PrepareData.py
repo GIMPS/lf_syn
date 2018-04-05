@@ -230,6 +230,38 @@ def compute_training_examples(curFullLF, curInputLF):
        # print(np.tile('\b', (1, 5)))
         print('Done\n')
     return pInImgs, pInFeat, pRef, refPos
+def compute_test_examples(curFullLF, curInputLF):
+
+
+    #########preparing input images
+    (height,width,_,_,_)=curInputLF.shape
+    inImgs=curInputLF.reshape((height,width,-1))
+
+
+
+    curRefPos = type('', (), {})()
+    curRefInd = type('', (), {})()
+    curRefInd.Y = 5
+    curRefInd.X = 5
+    curRefPos.Y = get_img_pos(curRefInd.Y)
+    curRefPos.X = get_img_pos(curRefInd.X)
+
+    print('Working on reference (5, 5): ')
+
+    #preparing reference
+    ref = curFullLF[:,:,:, curRefInd.Y, curRefInd.X]
+
+    ## preparing features
+    deltaViewY = inputView.Y - curRefPos.Y
+    deltaViewX = inputView.X - curRefPos.X
+    inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
+
+    ## preparing ref positions
+    refPos = [[curRefPos.Y],[curRefPos.X]]
+
+    print('Done\n')
+    return inImgs, inFeat, ref, refPos
+
 
 def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, startInd, createFlag, arraySize):
     chunkSize = 1000
@@ -252,31 +284,71 @@ def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, 
         createFlag = False
     return createFlag
 
-sceneFolder = param.trainingScenes
-outputFolder = param.trainingData
-[sceneNames, scenePaths, numScenes] = get_folder_content(sceneFolder, '.png')
-numPatches = get_num_patches()
-numTotalPatches = numPatches * param.numRefs * numScenes
-writeOrder = np.random.permutation(numTotalPatches)
-firstBatch = True
-make_dir(outputFolder)
 
-for ns in range(0, numScenes):
+def write_test_examples(inImgs, inFeat, ref, refPos, outputDir):
+    chunkSize = 10
+    fileName =outputDir+'.h5'
+    save_hdf(fileName, 'IN', inImgs.astype('float32'), pad_with_one(inImgs.shape, 4), [0, 0, 0,0], chunkSize, True)
+    save_hdf(fileName, 'FT', inFeat.astype('float32'), pad_with_one(inFeat.shape, 4), [0, 0, 0,0], chunkSize,
+            True)
+    save_hdf(fileName, 'GT', ref.astype('float32'), pad_with_one(ref.shape, 4), [0, 0, 0, 0], chunkSize,
+            True)
+    save_hdf(fileName, 'RP', refPos.astype('float32'), refPos.shape, [0, 0], chunkSize, True)
 
-    print('**********************************\n')
-    print('Working on the "%s" dataset (%d of %d)\n' %( sceneNames[ns][0:- 4], ns, numScenes))
 
-    print('Loading input light field ...')
-    [curFullLF, curInputLF] = read_illum_images(scenePaths[ns])
-    #print(repmat('\b', 1, 3))
-    print('Done\n')
-    print('**********************************\n')
+def prepare_training_data():
+    sceneFolder = param.trainingScenes
+    outputFolder = param.trainingData
+    [sceneNames, scenePaths, numScenes] = get_folder_content(sceneFolder, '.png')
+    numPatches = get_num_patches()
+    numTotalPatches = numPatches * param.numRefs * numScenes
+    writeOrder = np.random.permutation(numTotalPatches)
+    firstBatch = True
+    make_dir(outputFolder)
 
-    print('\nPreparing training examples\n')
-    print('------------------------------\n')
-    [pInImgs, pInFeat, pRef, refPos] = compute_training_examples(curFullLF, curInputLF)
+    for ns in range(0, numScenes):
+        print('**********************************\n')
+        print('Working on the "%s" dataset (%d of %d)\n' % (sceneNames[ns][0:- 4], ns, numScenes))
 
-    print('\nWriting training examples\n\n')
-    firstBatch =write_training_examples(pInImgs, pInFeat, pRef, refPos, outputFolder, writeOrder,
-                                       ns * numPatches * param.numRefs+1, firstBatch, numTotalPatches)
+        print('Loading input light field ...')
+        [curFullLF, curInputLF] = read_illum_images(scenePaths[ns])
+        # print(repmat('\b', 1, 3))
+        print('Done\n')
+        print('**********************************\n')
 
+        print('\nPreparing training examples\n')
+        print('------------------------------\n')
+        [pInImgs, pInFeat, pRef, refPos] = compute_training_examples(curFullLF, curInputLF)
+
+        print('\nWriting training examples\n\n')
+        firstBatch = write_training_examples(pInImgs, pInFeat, pRef, refPos, outputFolder, writeOrder,
+                                             ns * numPatches * param.numRefs + 1, firstBatch, numTotalPatches)
+
+
+def prepare_test_data():
+    sceneFolder = param.testScenes
+    outputFolder = param.testData
+    [sceneNames, scenePaths, numScenes] = get_folder_content(sceneFolder, '.png')
+
+    for ns in range(0, numScenes):
+        curOutputName = outputFolder+ '/'+ sceneNames[ns][0: - 4]
+
+        print('**********************************\n')
+        print('Working on the "%s" dataset (%d of %d)\n' % (sceneNames[ns][0:- 4], ns, numScenes))
+
+        print('Loading input light field ...')
+        [curFullLF, curInputLF] = read_illum_images(scenePaths[ns])
+        # print(repmat('\b', 1, 3))
+        print('Done\n')
+        print('**********************************\n')
+
+        print('\nPreparing training examples\n')
+        print('------------------------------\n')
+        [pInImgs, pInFeat, pRef, refPos] = compute_test_examples(curFullLF, curInputLF)
+
+        print('\nWriting training examples\n\n')
+        write_test_examples(pInImgs, pInFeat, pRef, refPos, curOutputName)
+
+
+prepare_test_data()
+prepare_training_data()
