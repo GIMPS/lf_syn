@@ -1,9 +1,8 @@
-from __future__ import print_function, division
 import os
 import os.path
 import numpy as np
 from PIL import Image
-from math import floor,inf
+from math import floor
 from InitParam import param,novelView,inputView,get_folder_content
 from scipy.interpolate import interp2d
 
@@ -68,33 +67,31 @@ def pad_with_one(input, finalLength):
     output = list(input)+ np.ones((1, finalLength - len(input)),dtype=np.uint8).flatten().tolist()
     return output
 
-def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFlag, arraySize):
-
+def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFlag, arraySize= 100):
     import warnings
     warnings.filterwarnings("ignore")
     import h5py
-
-    if not 'arraySize' in locals() or not arraySize:
-        arraySize = inf
 
     f = h5py.File(fileName, "a")
     if createFlag:
         dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f',chunks=(*inDims[0: - 1], chunkSize))
     else:
         dset=f.get(datasetName)
-    sliceCmd=''
-    sliceIdx=''
+
+    sliceIdx=[]
     for i in range(len(inDims)):
-        if i !=0:
-            sliceIdx+=','
-        if inDims[i] ==1:
-            sliceIdx+=str(startLoc[i])
+        #_handle_simple in h5py/slection.py does not handle length=1 slices properly
+        if inDims[i]== 1:
+            idx=startLoc[i]
         else:
-            sliceIdx+=str(startLoc[i])+':'+str(startLoc[i]+inDims[i])
-    sliceCmd='dset[' + sliceIdx+ ']=input.astype(\'float32\')' #todo: need elegant solution
-    exec(sliceCmd)
+            idx=slice(startLoc[i],startLoc[i]+inDims[i])
+        sliceIdx.append(idx)
+    while input.shape[-1]== 1:
+        input=input.flatten()
+    dset.write_direct(input.astype('float32'),dest_sel=tuple(sliceIdx))
     startLoc[-1] = startLoc[-1] + inDims[-1]
     f.close()
+    print("Done")
     return startLoc
 
 
@@ -257,7 +254,7 @@ def compute_test_examples(curFullLF, curInputLF):
     inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
 
     ## preparing ref positions
-    refPos = [[curRefPos.Y],[curRefPos.X]]
+    refPos = np.array([[curRefPos.Y],[curRefPos.X]])
 
     print('Done\n')
     return inImgs, inFeat, ref, refPos
