@@ -5,6 +5,7 @@ from PIL import Image
 from math import floor
 from InitParam import param,novelView,inputView,get_folder_content
 from scipy.interpolate import interp2d
+import torch
 
 
 
@@ -67,14 +68,16 @@ def pad_with_one(input, finalLength):
     output = list(input)+ np.ones((1, finalLength - len(input)),dtype=np.uint8).flatten().tolist()
     return output
 
-def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFlag, arraySize= 100):
+def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFlag, arraySize= 1):
     import warnings
     warnings.filterwarnings("ignore")
     import h5py
 
     f = h5py.File(fileName, "a")
     if createFlag:
-        dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f',chunks=(*inDims[0: - 1], chunkSize))
+        dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f',chunks=True)
+        print(dset.shape)
+        print(dset.maxshape)
     else:
         dset=f.get(datasetName)
 
@@ -93,6 +96,32 @@ def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFl
     f.close()
     print("Done")
     return startLoc
+
+def warp_images(disparity, input, delY, delX):
+    [h, w, numImages] = disparity.shape
+    [X, Y] = np.mgrid[0:w, 0: h]
+    c = input.shape[2]
+
+    output = np.zeros((h, w, c, numImages), 'flaot')
+    for j in range(0, numImages):
+        for i in range(0, c):
+            curX = X + delX(j) * disparity[:,:, j]
+            curY = Y + delY(j) * disparity[:,:, j]
+
+            #output[:,:, i, j] = interp2(X, Y, input[:,:, i, j], curX, curY, 'cubic', nan)#todo
+    return output
+
+
+def warp_all_images(images,depth,refPos):
+    [h,w,c,numImages]=images.shape
+    numInputViews=len(inputView.Y)
+    #######todo:gather
+    warpedImages=np.zeros((h,w,c,numImages),'float')
+    for i in range(0,numInputViews):
+        deltaY=inputView.Y[i],-refPos[0,:]
+        deltaX=inputView.X[i],-refPos[1,:]
+        warpedImages[:, :, (i-1)*3+1 : i*3, :]= warp_images(depth, images[:, :, (i-1)*3+1:i*3, :], deltaY, deltaX)
+    return warpedImages
 
 
 def prepare_depth_features(inputLF, deltaY, deltaX):
@@ -145,6 +174,26 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
     featuresStack[:,:, 100: 200] = correspStack.astype('float32')
 
     return featuresStack
+
+
+def prepare_color_features(depth,images,refPos):
+    images=crop_img(images,param.depthBorder)
+    warpedImages=warp_all_images(images,depth,refPos)
+    indNan=np.isnan(warpedImages)
+    warpedImages[indNan]=0
+
+    warpedImages=torch.from_numpy(warpedImages)
+    if param.useGPU:
+        warpedImages=warpedImages.cuda()
+    [h,w,_]=depth.shape
+    refPos = refPos.reshape((2, 1, 1,-1))
+    colorFeatures = np.concatenate(( depth, warpedImages, np.tile(refPos[0,:,:,:]-1.5, (h, w, 1, 1)), np.tile(
+        refPos[1,:,:,:]-1.5, (h, w, 1, 1))),axis=3)
+    return colorFeatures, indNan
+
+
+
+
 
 def read_illum_images(scenePath):
     """Read from illum images.
@@ -346,6 +395,3 @@ def prepare_test_data():
         print('\nWriting training examples\n\n')
         write_test_examples(pInImgs, pInFeat, pRef, refPos, curOutputName)
 
-
-prepare_test_data()
-prepare_training_data()
