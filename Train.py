@@ -209,7 +209,7 @@ def train():
 
 if __name__ == "__main__":
     fileName="./TrainingData/Test/Cars.h5"
-    # prepare_test_data()
+    prepare_test_data()
     #prepare_training_data()
     batchSize = param.batchSize
     depthBorder = param.depthBorder
@@ -238,4 +238,4 @@ if __name__ == "__main__":
     if dataName == 'FT':
         s = f[fileInfo[0]].shape
         features = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd+batchSize]
-        print(features)
+        print(features[0][0][0:100])

@@ -47,7 +47,7 @@ def get_num_patches():
     return numPatches
 
 def get_img_pos(ind):
-    pos = (ind - 1) / (param.origAngRes - 1) + 1
+    pos = ind / (param.origAngRes - 1)
     return pos
 
 
@@ -139,15 +139,16 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
     correspStack = np.zeros((height, width, depthResolution))
     featuresStack = np.zeros((height, width, 200))
     delta = 2 * deltaDisparity / (depthResolution - 1)
+    # print(delta)
+    indDepth =0
 
-    indDepth = 1
-
-    for curDepth in np.arange( - deltaDisparity, deltaDisparity,delta):
+    for curDepth in np.arange( - deltaDisparity, deltaDisparity+delta,delta):
         #if indDepth% 10 == 0:
             #print()
         #todo: progress bar
         shearedLF = np.zeros((height, width, angHeight * angWidth))
-        X, Y = np.mgrid[0:width, 0: height]
+        X=np.arange(0,width)
+        Y=np.arange(0,height)
 
         #backward warping all the input images using each depth level (see Eq. 5)
 
@@ -156,23 +157,22 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
             for iay in range(0, angHeight):
                 curY = Y + curDepth * deltaY[indView]
                 curX = X + curDepth * deltaX[indView]
-                #todo: verify interp2d on a large RAM machine
-                #ip=interp2d(X,Y,grayLF[:,:, iay, iax],kind='cubic')
-                #shearedLF[:,:, indView] =ip(curX, curY)
+                ip=interp2d(X,Y,grayLF[:,:, iay, iax],kind='cubic')
+                shearedLF[:,:, indView] =ip(curX, curY)
                 indView = indView + 1
         #computing the final mean and variance features for depth level using Eq. 6
 
         defocusStack[:,:, indDepth] = defocus_response(shearedLF)
         correspStack[:,:, indDepth] = corresp_response(shearedLF)
 
-        if indDepth%10 == 0:
-            print(indDepth / depthResolution * 100)
+        if (indDepth+1)%10 == 0:
+            print((indDepth+1) / depthResolution * 100)
 
         indDepth = indDepth + 1
 
     featuresStack[:,:, 0: 100] = defocusStack.astype('float32')
     featuresStack[:,:, 100: 200] = correspStack.astype('float32')
-
+    # print(grayLF)
     return featuresStack
 
 
@@ -192,7 +192,11 @@ def prepare_color_features(depth,images,refPos):
     return colorFeatures, indNan
 
 
-
+def im2double(im):
+    min_val = np.min(im.ravel())
+    max_val = np.max(im.ravel())
+    out = (im.astype('float') - min_val) / (max_val - min_val)
+    return out
 
 
 def read_illum_images(scenePath):
@@ -204,6 +208,7 @@ def read_illum_images(scenePath):
     numImgsY=14
 
     inputImg = load_image(scenePath)
+    inputImg=im2double(inputImg)
     h = inputImg.shape[0] // numImgsY
     w = inputImg.shape[1] // numImgsX
     fullLF = np.zeros((h, w, 3, numImgsY, numImgsX),dtype=np.uint8)
@@ -215,8 +220,9 @@ def read_illum_images(scenePath):
     if h == 375 and w == 541:
         fullLF = np.pad(fullLF, ((0,1),(0,0),(0,0),(0,0),(0,0)), mode='constant',constant_values=0)
     fullLF = fullLF[:, :, :, 3:11, 3:11]
-    inputLF = fullLF[:, :, :, np.ix_([0, 7]), np.ix_([0, 7])]
-
+    inputLF = fullLF[:, :, :, 1:8:6,1:8:6]
+    print("curInputLF size is ")
+    print(inputLF.shape)
     return fullLF,inputLF
 
 def compute_training_examples(curFullLF, curInputLF):
@@ -280,15 +286,15 @@ def compute_test_examples(curFullLF, curInputLF):
 
 
     #########preparing input images
-    (height,width,_,_,_)=curInputLF.shape
+    [height,width,_,_,_]=curInputLF.shape
     inImgs=curInputLF.reshape((height,width,-1))
 
 
 
     curRefPos = type('', (), {})()
     curRefInd = type('', (), {})()
-    curRefInd.Y = 5
-    curRefInd.X = 5
+    curRefInd.Y = 4
+    curRefInd.X = 4
     curRefPos.Y = get_img_pos(curRefInd.Y)
     curRefPos.X = get_img_pos(curRefInd.X)
 
@@ -300,6 +306,8 @@ def compute_test_examples(curFullLF, curInputLF):
     ## preparing features
     deltaViewY = inputView.Y - curRefPos.Y
     deltaViewX = inputView.X - curRefPos.X
+    print(deltaViewX)
+    print(deltaViewY)
     inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
 
     ## preparing ref positions
@@ -314,7 +322,7 @@ def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, 
     fileName =outputDir+'/training.h5'
     numElements = refPos.shape[1]
     for k in range(0, numElements):
-        j = k + startInd - 1
+        j = k + startInd
         curInImgs = inImgs[:,:,:, k]
         curInFeat = inFeat[:,:,:, k]
         curRef = ref[:,:,:, k]
@@ -368,7 +376,7 @@ def prepare_training_data():
 
         print('\nWriting training examples\n\n')
         firstBatch = write_training_examples(pInImgs, pInFeat, pRef, refPos, outputFolder, writeOrder,
-                                             ns * numPatches * param.numRefs + 1, firstBatch, numTotalPatches)
+                                             ns * numPatches * param.numRefs, firstBatch, numTotalPatches)
 
 
 def prepare_test_data():
@@ -388,10 +396,10 @@ def prepare_test_data():
         print('Done\n')
         print('**********************************\n')
 
-        print('\nPreparing training examples\n')
+        print('\nPreparing test examples\n')
         print('------------------------------\n')
         [pInImgs, pInFeat, pRef, refPos] = compute_test_examples(curFullLF, curInputLF)
 
-        print('\nWriting training examples\n\n')
+        print('\nWriting test examples\n\n')
         write_test_examples(pInImgs, pInFeat, pRef, refPos, curOutputName)
 

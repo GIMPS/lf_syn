@@ -29,8 +29,8 @@ param.testNet = 'TrainedNetworks'
 novelView=type('', (), {})()
 inputView=type('', (), {})()
 
-[novelView.X, novelView.Y] = np.mgrid[1:2.1:1/7., 1:2.1:1/7.]
-[inputView.X, inputView.Y] = np.mgrid[1:3., 1:3.]
+[novelView.X, novelView.Y] = np.mgrid[0:1.1:1/7., 0:1.1:1/7.]
+[inputView.X, inputView.Y] = np.mgrid[0:2., 0:2.]
 novelView.Y = novelView.Y.conj().transpose()
 novelView.X = novelView.X.conj().transpose()
 novelView.Y = novelView.Y.flatten()
