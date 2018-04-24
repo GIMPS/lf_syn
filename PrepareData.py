@@ -4,19 +4,60 @@ import numpy as np
 from PIL import Image
 from math import floor
 from InitParam import param,novelView,inputView,get_folder_content
-from scipy.interpolate import interp2d
 import torch
+import cv2
+from scipy.interpolate import *
 
-
+# class my_interp2d(interp2d):#todo: if clip_value necessary
+#     def __call__(self, x, y, dx=0, dy=0, assume_sorted=False):
+#         x = np.atleast_1d(x)
+#         y = np.atleast_1d(y)
+#
+#         if x.ndim != 1 or y.ndim != 1:
+#             raise ValueError("x and y should both be 1-D arrays")
+#
+#         if not assume_sorted:
+#             x = np.sort(x)
+#             y = np.sort(y)
+#
+#
+#         clip_value=0
+#         self.x_min-=clip_value
+#         self.x_max += clip_value
+#         self.y_min-=clip_value
+#         self.y_max+=clip_value
+#
+#
+#         if self.bounds_error or self.fill_value is not None:
+#             out_of_bounds_x = (x < self.x_min) | (x > self.x_max)
+#             out_of_bounds_y = (y < self.y_min) | (y > self.y_max)
+#             # print(out_of_bounds_x)
+#             any_out_of_bounds_x = np.any(out_of_bounds_x)
+#             any_out_of_bounds_y = np.any(out_of_bounds_y)
+#
+#         if self.bounds_error and (any_out_of_bounds_x or any_out_of_bounds_y):
+#             raise ValueError("Values out of range; x must be in %r, y in %r"
+#                              % ((self.x_min, self.x_max),
+#                                 (self.y_min, self.y_max)))
+#
+#         z = fitpack.bisplev(x, y, self.tck, dx, dy)
+#         z = np.atleast_2d(z)
+#         z = np.transpose(z)
+#
+#         if self.fill_value is not None:
+#             if any_out_of_bounds_x:
+#                 z[:, out_of_bounds_x] = self.fill_value
+#             if any_out_of_bounds_y:
+#                 z[out_of_bounds_y, :] = self.fill_value
+#
+#         if len(z) == 1:
+#             z = z[0]
+#         return np.array(z)
 
 
 def make_dir(inputPath):
     if not os.path.exists(inputPath):
         os.makedirs(inputPath)
-
-def load_image( path ) :
-    img = Image.open( path )
-    return  np.asarray( img.convert('RGB') )
 
 def crop_img(input,pad):
     return input[pad:- pad, pad: - pad]
@@ -72,12 +113,9 @@ def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFl
     import warnings
     warnings.filterwarnings("ignore")
     import h5py
-
     f = h5py.File(fileName, "a")
     if createFlag:
         dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f',chunks=True)
-        print(dset.shape)
-        print(dset.maxshape)
     else:
         dset=f.get(datasetName)
 
@@ -90,25 +128,30 @@ def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFl
             idx=slice(startLoc[i],startLoc[i]+inDims[i])
         sliceIdx.append(idx)
     while input.shape[-1]== 1:
-        input=input.flatten()
-    dset.write_direct(input.astype('float32'),dest_sel=tuple(sliceIdx))
+        input=input[...,0]
+    dset.write_direct(input.astype('float32'), dest_sel=tuple(sliceIdx))#todo: too slow!!
     startLoc[-1] = startLoc[-1] + inDims[-1]
     f.close()
-    print("Done")
     return startLoc
 
 def warp_images(disparity, input, delY, delX):
-    [h, w, numImages] = disparity.shape
-    [X, Y] = np.mgrid[0:w, 0: h]
+    input=input.numpy()
+    [h, w, _, numImages] = disparity.shape
+    X = np.arange(0, w,dtype='float')
+    Y = np.arange(0, h,dtype='float')
+    XX,YY=np.meshgrid(X,Y)
+    points= np.zeros((h*w,2))
+    points[:,0]=XX.flatten()
+    points[:,1]=YY.flatten()
     c = input.shape[2]
+    output = np.zeros((h, w, c, numImages), 'float')
 
-    output = np.zeros((h, w, c, numImages), 'flaot')
     for j in range(0, numImages):
         for i in range(0, c):
-            curX = X + delX(j) * disparity[:,:, j]
-            curY = Y + delY(j) * disparity[:,:, j]
+            curX = XX + delX[j] * disparity[:,:,0, j]
+            curY = YY + delY[j] * disparity[:,:,0, j]
+            output[:, :, i, j] = griddata(points, input[:,:, i, j].flatten(),(curX,curY), method='cubic', fill_value=np.nan)
 
-            #output[:,:, i, j] = interp2(X, Y, input[:,:, i, j], curX, curY, 'cubic', nan)#todo
     return output
 
 
@@ -116,12 +159,17 @@ def warp_all_images(images,depth,refPos):
     [h,w,c,numImages]=images.shape
     numInputViews=len(inputView.Y)
     #######todo:gather
+
     warpedImages=np.zeros((h,w,c,numImages),'float')
     for i in range(0,numInputViews):
-        deltaY=inputView.Y[i],-refPos[0,:]
-        deltaX=inputView.X[i],-refPos[1,:]
-        warpedImages[:, :, (i-1)*3+1 : i*3, :]= warp_images(depth, images[:, :, (i-1)*3+1:i*3, :], deltaY, deltaX)
+        deltaY=inputView.Y[i] - refPos[0]
+        deltaX=inputView.X[i] - refPos[1]
+        warpedImages[:, :, i*3+1 : (i+1)*3, :]= warp_images(depth, images[:, :, i*3+1:(i+1)*3, :], deltaY, deltaX)
+
     return warpedImages
+
+def rgb2gray(rgb):
+    return np.dot(rgb[...,:3], [0.299, 0.587, 0.114])
 
 
 def prepare_depth_features(inputLF, deltaY, deltaX):
@@ -132,14 +180,12 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
     grayLF = np.zeros((height, width, angHeight, angWidth))
     for i in range(0, angHeight):
         for j in range (0, angWidth):
-            im = Image.fromarray(inputLF[:,:,:, i, j])
-            grayLF[:,:, i, j] = np.asanyarray(im.convert('L'))
+            grayLF[:,:, i, j] = rgb2gray(inputLF[:,:,:,i,j])
 
     defocusStack = np.zeros((height, width, depthResolution))
     correspStack = np.zeros((height, width, depthResolution))
     featuresStack = np.zeros((height, width, 200))
     delta = 2 * deltaDisparity / (depthResolution - 1)
-    # print(delta)
     indDepth =0
 
     for curDepth in np.arange( - deltaDisparity, deltaDisparity+delta,delta):
@@ -157,7 +203,7 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
             for iay in range(0, angHeight):
                 curY = Y + curDepth * deltaY[indView]
                 curX = X + curDepth * deltaX[indView]
-                ip=interp2d(X,Y,grayLF[:,:, iay, iax],kind='cubic')
+                ip = interp2d(X,Y,grayLF[:,:, iay, iax],kind='cubic',fill_value=np.nan)
                 shearedLF[:,:, indView] =ip(curX, curY)
                 indView = indView + 1
         #computing the final mean and variance features for depth level using Eq. 6
@@ -170,9 +216,10 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
 
         indDepth = indDepth + 1
 
+
     featuresStack[:,:, 0: 100] = defocusStack.astype('float32')
     featuresStack[:,:, 100: 200] = correspStack.astype('float32')
-    # print(grayLF)
+    # print(featuresStack[122,233,:])
     return featuresStack
 
 
@@ -182,22 +229,21 @@ def prepare_color_features(depth,images,refPos):
     indNan=np.isnan(warpedImages)
     warpedImages[indNan]=0
 
-    warpedImages=torch.from_numpy(warpedImages)
-    if param.useGPU:
-        warpedImages=warpedImages.cuda()
-    [h,w,_]=depth.shape
+    # warpedImages=torch.from_numpy(warpedImages)
+    # if param.useGPU:
+    #     warpedImages=warpedImages.cuda()
+    [h,w,_,_]=depth.shape
     refPos = refPos.reshape((2, 1, 1,-1))
-    colorFeatures = np.concatenate(( depth, warpedImages, np.tile(refPos[0,:,:,:]-1.5, (h, w, 1, 1)), np.tile(
-        refPos[1,:,:,:]-1.5, (h, w, 1, 1))),axis=3)
+    colorFeatures = np.concatenate((depth, warpedImages, np.tile(refPos[0,:,:,:]-1.5, (h, w, 1, 1)), np.tile(
+        refPos[1,:,:,:]-1.5, (h, w, 1, 1))),axis=2)
     return colorFeatures, indNan
 
 
-def im2double(im):
-    min_val = np.min(im.ravel())
-    max_val = np.max(im.ravel())
-    out = (im.astype('float') - min_val) / (max_val - min_val)
-    return out
 
+
+def im2double(im):
+    info = np.iinfo(im.dtype) # Get the data type of the input image
+    return im.astype(np.float) / info.max# Divide all values by the largest possible value in the datatype
 
 def read_illum_images(scenePath):
     """Read from illum images.
@@ -206,12 +252,13 @@ def read_illum_images(scenePath):
     """
     numImgsX=14
     numImgsY=14
-
-    inputImg = load_image(scenePath)
+    inputImg = cv2.imread(scenePath, -cv2.IMREAD_ANYDEPTH)  # read 16 bit image
+    inputImg=inputImg[:,:,0:3]  # strip off Alpha layer
+    inputImg = cv2.cvtColor(inputImg, cv2.COLOR_BGR2RGB)    # BGR to RGB
     inputImg=im2double(inputImg)
     h = inputImg.shape[0] // numImgsY
     w = inputImg.shape[1] // numImgsX
-    fullLF = np.zeros((h, w, 3, numImgsY, numImgsX),dtype=np.uint8)
+    fullLF = np.zeros((h, w, 3, numImgsY, numImgsX),dtype=np.float)
     for ax in range(numImgsX):
         for ay in range(numImgsY):
             fullLF[:, :, :, ay, ax] = inputImg[ay::numImgsY, ax::numImgsX,:]
@@ -220,9 +267,8 @@ def read_illum_images(scenePath):
     if h == 375 and w == 541:
         fullLF = np.pad(fullLF, ((0,1),(0,0),(0,0),(0,0),(0,0)), mode='constant',constant_values=0)
     fullLF = fullLF[:, :, :, 3:11, 3:11]
-    inputLF = fullLF[:, :, :, 1:8:6,1:8:6]
-    print("curInputLF size is ")
-    print(inputLF.shape)
+    inputLF = fullLF[:, :, :, 0:8:7,0:8:7]
+
     return fullLF,inputLF
 
 def compute_training_examples(curFullLF, curInputLF):
@@ -262,7 +308,7 @@ def compute_training_examples(curFullLF, curInputLF):
         curRefPos.Y = get_img_pos(curRefInd.Y)
         curRefPos.X = get_img_pos(curRefInd.X)
 
-        wInds = np.arange((ri - 1) * numPatches, ri * numPatches)
+        wInds = np.arange(ri * numPatches, (ri+1) * numPatches)
 
         #preparing reference
         ref = curFullLF[:,:,:, curRefInd.Y, curRefInd.X]
@@ -274,14 +320,14 @@ def compute_training_examples(curFullLF, curInputLF):
         inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
         inFeat = crop_img(inFeat, cropSize)
         pInFeat[:,:,:, wInds] = get_patches(inFeat, patchSize, stride)
-
         ## preparing ref positions
         refPos[0, wInds] =np.tile(curRefPos.Y, (1, numPatches))
         refPos[1, wInds] =np.tile(curRefPos.X, (1, numPatches))
-
        # print(np.tile('\b', (1, 5)))
         print('Done\n')
     return pInImgs, pInFeat, pRef, refPos
+
+
 def compute_test_examples(curFullLF, curInputLF):
 
 
@@ -306,8 +352,6 @@ def compute_test_examples(curFullLF, curInputLF):
     ## preparing features
     deltaViewY = inputView.Y - curRefPos.Y
     deltaViewX = inputView.X - curRefPos.X
-    print(deltaViewX)
-    print(deltaViewY)
     inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
 
     ## preparing ref positions
@@ -320,9 +364,12 @@ def compute_test_examples(curFullLF, curInputLF):
 def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, startInd, createFlag, arraySize):
     chunkSize = 1000
     fileName =outputDir+'/training.h5'
+    # print(refPos.shape)
     numElements = refPos.shape[1]
     for k in range(0, numElements):
+
         j = k + startInd
+
         curInImgs = inImgs[:,:,:, k]
         curInFeat = inFeat[:,:,:, k]
         curRef = ref[:,:,:, k]
@@ -332,9 +379,9 @@ def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, 
                 createFlag, arraySize)
         save_hdf(fileName, 'GT', curRef.astype('float32'), pad_with_one(curRef.shape, 4), [0, 0, 0, writeOrder[j]], chunkSize,
                 createFlag, arraySize)
-        save_hdf(fileName, 'RP', curRefPos.astype('float32'), curRefPos.shape, [0, writeOrder[j]], chunkSize, createFlag,
+        save_hdf(fileName, 'RP', curRefPos.astype('float32'), pad_with_one(curRefPos.shape, 2), [0, writeOrder[j]], chunkSize, createFlag,
                 arraySize)
-
+        print("writing {} / {}".format(k, numElements))
         createFlag = False
     return createFlag
 
@@ -365,7 +412,7 @@ def prepare_training_data():
         print('Working on the "%s" dataset (%d of %d)\n' % (sceneNames[ns][0:- 4], ns, numScenes))
 
         print('Loading input light field ...')
-        [curFullLF, curInputLF] = read_illum_images(scenePaths[ns])
+        curFullLF, curInputLF = read_illum_images(scenePaths[ns])
         # print(repmat('\b', 1, 3))
         print('Done\n')
         print('**********************************\n')
@@ -403,3 +450,7 @@ def prepare_test_data():
         print('\nWriting test examples\n\n')
         write_test_examples(pInImgs, pInFeat, pRef, refPos, curOutputName)
 
+
+if __name__ == "__main__":
+    # prepare_test_data()
+    prepare_training_data()

@@ -4,3 +4,5 @@
 __pycache__/
 .idea/
 try.py
+TrainingData/Training/*.tar
+TrainingData/Training/error.txt

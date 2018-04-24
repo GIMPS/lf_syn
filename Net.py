@@ -1,43 +1,37 @@
 import torch
 import torch.nn as nn
 
-class depthNet(nn.Module):
+class depthNetModel(nn.Module):
     def __init__(self):
-        super(depthNet, self).__init__()
-        self.conv1= nn.Conv2d(200,100,stride=1)
-
-        self.conv2=nn.Conv2d(100,100,stride=1)
-        self.conv3=nn.Conv2d(100,50,stride=1)
-        self.conv4 = nn.Conv2d(50, 1, stride=1)
-        self.relu = nn.ReLU()
+        super(depthNetModel, self).__init__()
+        self.layer=nn.Sequential(
+            nn.Conv2d(200,100,7,stride=1),
+            nn.ReLU(),
+            nn.Conv2d(100,100,5,stride=1),
+            nn.ReLU(),
+            nn.Conv2d(100,50,3,stride=1),
+            nn.ReLU(),
+            nn.Conv2d(50, 1, 1,stride=1),
+        )
 
     def forward(self, features):
-        out=self.conv1(features)
-        out=self.relu(out)
-        out=self.conv2(out)
-        out=self.relu(out)
-        out=self.conv3(out)
-        out=self.relu(out)
-        out=self.conv4(out)
+        out = self.layer(features)
         return out
 
 
-
-class colorNet(nn.Module):
+class colorNetModel(nn.Module):
     def __init__(self):
-        super(colorNet, self).__init__()
-        self.conv1= nn.Conv2d(15,100,stride=1)
-        self.conv2=nn.Conv2d(100,100,stride=1)
-        self.conv3=nn.Conv2d(100,50,stride=1)
-        self.conv4 = nn.Conv2d(50, 3, stride=1)
-        self.relu = nn.ReLU()
+        super(colorNetModel, self).__init__()
+        self.layer = nn.Sequential(
+            nn.Conv2d(15,100,7,stride=1),
+            nn.ReLU(),
+            nn.Conv2d(100,100,5,stride=1),
+            nn.ReLU(),
+            nn.Conv2d(100,50,3,stride=1),
+            nn.ReLU(),
+            nn.Conv2d(50, 3, 1,stride=1),
+        )
 
     def forward(self, features):
-        out=self.conv1(features)
-        out=self.relu(out)
-        out=self.conv2(out)
-        out=self.relu(out)
-        out=self.conv3(out)
-        out=self.relu(out)
-        out=self.conv4(out)
+        out = self.layer(features)
         return out

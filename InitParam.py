@@ -8,7 +8,9 @@ def get_folder_content(folderPath,extension):
     dir = os.path.expanduser(folderPath)
     for target in sorted(os.listdir(dir)):
         d = os.path.join(dir, target)
-        if any(target.lower().endswith(ext) for ext in extension):
+        if os.path.isdir(d):
+            continue
+        if target.lower().endswith(extension):
             contentNames.append(target)
             contentPaths.append(d)
             numContents+=1
@@ -62,17 +64,17 @@ param.cropWidth = param.width - 2 * param.cropSizeTraining
 
 param.trainingScenes = 'TrainingData/Training/'
 param.trainingData = 'TrainingData/Training/'
-trainingNames = get_folder_content(param.trainingData, '.h5')[1]
+_, param.trainingNames,  _ = get_folder_content(param.trainingData, '.h5')
 
 param.testScenes = 'TrainingData/Test/'
 param.testData = 'TrainingData/Test/'
-testNames = get_folder_content(param.testData, '.h5')[1]
+_, param.testNames, _ = get_folder_content(param.testData, '.h5')
 
 param.trainNet = 'TrainingData'
 
 
 param.isContinue = True
-param.startIter = 0
+param.startIter = -1
 
 param.testNetIter = 100
 param.printInfoIter = 5
