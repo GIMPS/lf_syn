@@ -76,7 +76,7 @@ param.trainNet = 'TrainingData'
 param.isContinue = False
 param.startIter = -1
 
-param.testNetIter = 10
+param.testNetIter = 100
 param.printInfoIter = 5
 
 

@@ -1,60 +1,11 @@
 import os
 import os.path
 import numpy as np
-from PIL import Image
 from math import floor
-from InitParam import param, novelView, inputView, get_folder_content
+from InitParam import param, inputView, get_folder_content
 import torch
 import cv2
 from scipy.interpolate import *
-
-
-# class my_interp2d(interp2d):#todo: if clip_value necessary
-#     def __call__(self, x, y, dx=0, dy=0, assume_sorted=False):
-#         x = np.atleast_1d(x)
-#         y = np.atleast_1d(y)
-#
-#         if x.ndim != 1 or y.ndim != 1:
-#             raise ValueError("x and y should both be 1-D arrays")
-#
-#         if not assume_sorted:
-#             x = np.sort(x)
-#             y = np.sort(y)
-#
-#
-#         clip_value=0
-#         self.x_min-=clip_value
-#         self.x_max += clip_value
-#         self.y_min-=clip_value
-#         self.y_max+=clip_value
-#
-#
-#         if self.bounds_error or self.fill_value is not None:
-#             out_of_bounds_x = (x < self.x_min) | (x > self.x_max)
-#             out_of_bounds_y = (y < self.y_min) | (y > self.y_max)
-#             # print(out_of_bounds_x)
-#             any_out_of_bounds_x = np.any(out_of_bounds_x)
-#             any_out_of_bounds_y = np.any(out_of_bounds_y)
-#
-#         if self.bounds_error and (any_out_of_bounds_x or any_out_of_bounds_y):
-#             raise ValueError("Values out of range; x must be in %r, y in %r"
-#                              % ((self.x_min, self.x_max),
-#                                 (self.y_min, self.y_max)))
-#
-#         z = fitpack.bisplev(x, y, self.tck, dx, dy)
-#         z = np.atleast_2d(z)
-#         z = np.transpose(z)
-#
-#         if self.fill_value is not None:
-#             if any_out_of_bounds_x:
-#                 z[:, out_of_bounds_x] = self.fill_value
-#             if any_out_of_bounds_y:
-#                 z[out_of_bounds_y, :] = self.fill_value
-#
-#         if len(z) == 1:
-#             z = z[0]
-#         return np.array(z)
-
 
 def make_dir(inputPath):
     if not os.path.exists(inputPath):
@@ -295,8 +246,7 @@ def compute_training_examples(curFullLF, curInputLF):
     pInImgs = np.tile(pInImgs, (1, 1, 1, numRefs))
     ####selecting random references
 
-    # numSeq = np.random.permutation(origAngRes ** 2)
-    numSeq = np.arange(0,origAngRes **2 )
+    numSeq = np.random.permutation(origAngRes ** 2)
     refInds = numSeq[0:numRefs]
 
     ##########initializing the arrays
@@ -405,8 +355,7 @@ def prepare_training_data():
     [sceneNames, scenePaths, numScenes] = get_folder_content(sceneFolder, '.png')
     numPatches = get_num_patches()
     numTotalPatches = numPatches * param.numRefs * numScenes
-    # writeOrder = np.random.permutation(numTotalPatches)
-    writeOrder = np.arange(numTotalPatches)
+    writeOrder = np.random.permutation(numTotalPatches)
     firstBatch = True
     make_dir(outputFolder)
 

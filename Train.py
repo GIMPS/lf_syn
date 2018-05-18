@@ -1,21 +1,13 @@
-import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim import lr_scheduler
 from torch.autograd import Variable
-from torchvision import datasets, models, transforms
 import time
-import os
-import copy
 from Net import depthNetModel, colorNetModel
-from math import floor
-from InitParam import param, novelView, inputView, get_folder_content
 from PrepareData import *
 import warnings
 
 warnings.filterwarnings("ignore")
 import h5py
-import re
 import matplotlib.pyplot as plt
 
 
@@ -40,7 +32,6 @@ def load_networks(isTraining=False):
             colorOptimizer.load_state_dict(checkpoint['colorOptimizer'])
         else:
             param.isContinue = False
-            # [net['depthNet'], net['colorNet']] = create_net()
 
     else:
         netFolder = param.testNet
@@ -83,13 +74,6 @@ def read_training_data(fileName, isTraining, it=0):
 
         if dataName == 'FT':
             s = f[dataName].shape
-            # print(dataName)
-            # print(s)
-            # if not isTraining:
-            #     features = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
-            # else:
-            #     features = f[dataName][startInd:startInd + batchSize, 0:s[1], 0:s[2], 0:s[3]]
-            #     features = np.transpose(features,(3,2,1,0))
             features = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
             features = torch.from_numpy(features)
             # wrap them in Variable
@@ -100,16 +84,6 @@ def read_training_data(fileName, isTraining, it=0):
 
         if dataName == 'GT':
             s = f[dataName].shape
-            # print(dataName)
-            # print(s)
-            # if not isTraining:
-            #     reference = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
-            # else:
-            #     reference = f[dataName][startInd:startInd + batchSize, 0:s[1], 0:s[2], 0:s[3]]
-            #     reference = reference.ravel('C')
-            #     reference.shape = batchSize,s[1],s[2],s[3]
-            #     reference = np.transpose(reference, (3, 2, 1, 0))
-            #     print(reference[10,10,2,:])
             reference = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
             # print(reference[0, 0, 0, :])
             reference = crop_img(reference, depthBorder + colorBorder)
@@ -122,13 +96,6 @@ def read_training_data(fileName, isTraining, it=0):
 
         if dataName == 'IN':
             s = f[dataName].shape
-            # print(dataName)
-            # print(s)
-            # if not isTraining:
-            #     images = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
-            # else:
-            #     images = f[dataName][startInd:startInd + batchSize, 0:s[1], 0:s[2], 0:s[3]]
-            #     images = np.transpose(images,(3,2,1,0))
             images = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
             images = torch.from_numpy(images)
             # wrap them in Variable
@@ -138,14 +105,6 @@ def read_training_data(fileName, isTraining, it=0):
                 images = images
 
         if dataName == 'RP':
-            s = f[dataName].shape
-            # print(dataName)
-            # print(s)
-            # if not isTraining:
-            #     refPos = f[dataName][0:2, startInd:startInd + batchSize]
-            # else:
-            #     refPos = f[dataName][startInd:startInd + batchSize, 0:2]
-            #     refPos = np.transpose(refPos,(1,0))
             refPos = f[dataName][0:2, startInd:startInd + batchSize]
             # refPos = torch.from_numpy(refPos)
             # # wrap them in Variable
@@ -160,10 +119,9 @@ def read_training_data(fileName, isTraining, it=0):
 
 def prepare_color_features_grad(depth, images, refPos, curFeatures, indNan, dzdx):
     delta = 0.01
-    # print(dzdx[4,4,4,:])
     depthP = depth + delta
     featuresP, indNanP = prepare_color_features(depthP, images, refPos)
-    grad = (featuresP - np.transpose(curFeatures.data.numpy(),(2,3,1,0))) / delta * dzdx
+    grad = (featuresP - np.transpose(curFeatures.data.numpy(), (2, 3, 1, 0))) / delta * dzdx
     tmp = grad[:, :, 1: - 2, :]
     tmp[indNan | indNanP] = 0
     grad[:, :, 1:- 2, :] = tmp
@@ -193,12 +151,12 @@ def evaluate_system(depthNet, colorNet, depthOptimizer=None, colorOptimizer=None
     if not isTraining:
         print('Evaluating depth network ...')
         dTime = time.time()
-    depthFeatures = np.transpose(depthFeatures, (3, 2, 0, 1))  # todo
+    depthFeatures = depthFeatures.permute(3, 2, 0, 1)  # todo
     depthFeatures = Variable(depthFeatures, requires_grad=True)
     depthRes = depthNet(depthFeatures)
     depth = depthRes / (param.origAngRes - 1)
-    depth = depth.data.numpy()
-    depth = np.transpose(depth, (2, 3, 1, 0))  # todo
+    depth = depth.data
+    depth = depth.permute(2, 3, 1, 0)  # todo
     if not isTraining:
         print('Done in {:.0f} seconds\n'.format(time.time() - dTime))
 
@@ -219,51 +177,34 @@ def evaluate_system(depthNet, colorNet, depthOptimizer=None, colorOptimizer=None
     if not isTraining:
         print('Evaluating color network ...')
         cfTime = time.time()
-    colorFeatures = np.transpose(colorFeatures, (3, 2, 0, 1))  # todo
     colorFeatures = torch.from_numpy(colorFeatures).float()
+    colorFeatures = colorFeatures.permute(3, 2, 0, 1)  # todo
     colorFeatures = Variable(colorFeatures, requires_grad=True)
     colorRes = colorNet(colorFeatures)
 
-    # colorRes = evaluate_net(colorNet, colorFeatures, [], True)
     finalImg = colorRes
     finalImg = np.transpose(finalImg.data.numpy(), (2, 3, 1, 0))
-    #
-    # from cv2 import imwrite
-    # imwrite('./Results/Seahorse/Images/tmp.png', (reference.numpy()[:,:,:,5] * 255).astype(int))
-    # print('done')
+
     if not isTraining:
         print('Done in {:.0f} seconds\n'.format(time.time() - cfTime))
     # Backpropagation
     if isTraining and not isTestDuringTraining:
-        # dzdx = vl_nnpdist(finalImg, reference, 2, 1, 'noRoot', true, 'aggregate', true) / numel(reference)
-        #
-        # colorRes[-1].dzdx = dzdx
-        # colorRes = evaluate_net(colorNet, colorFeatures, colorRes, False)
-        # dzdx = colorRes[0].dzdx
-        #
-        # dzdx = prepare_color_features_grad(depth, images, refPos, colorFeatures, indNan, dzdx)
-        #
-        # depthRes[-1].dzdx = dzdx / (param.origAngRes - 1)
-        # depthRes = evaluate_net(depthNet, depthFeatures, depthRes, False)
-        loss = criterion(colorRes, Variable(np.transpose(reference, (3, 2, 0, 1))))/reference.numpy().size
-        # print(reference[1,1,1,1])
+        loss = criterion(colorRes, Variable(np.transpose(reference, (3, 2, 0, 1)))) / reference.numpy().size
+
         depthOptimizer.zero_grad()
         colorOptimizer.zero_grad()
+
         loss.backward(torch.ones(10, 3, 36, 36))
+
         dzdx = colorFeatures.grad
-        dzdx = np.transpose(dzdx.data.numpy(),(2,3,1,0))
-        # print(dzdx)
+        dzdx = np.transpose(dzdx.data.numpy(), (2, 3, 1, 0))
         dzdx = prepare_color_features_grad(depth, images, refPos, colorFeatures, indNan, dzdx)
         dzdx = np.expand_dims(dzdx, 2)
-        dzdx = np.transpose(dzdx, (3, 2, 0, 1 ))
+        dzdx = np.transpose(dzdx, (3, 2, 0, 1))
         dzdx = torch.from_numpy(dzdx / (param.origAngRes - 1)).float()
-        # print(dzdx.shape)
-        # print(depthRes.data.shape)
-        # depthRes.grad = Variable(dzdx)
-        # depthRes.grad = Variable(torch.zeros(10,1,48,48))
-        # depthRes.backward(torch.ones(10, 1, 48, 48))
+
         depthRes.backward(dzdx)
-        # print(depthNet.layer[0].bias.grad)
+
         colorOptimizer.step()
         depthOptimizer.step()
 
@@ -271,9 +212,6 @@ def evaluate_system(depthNet, colorNet, depthOptimizer=None, colorOptimizer=None
 
 
 def compute_psnr(input, ref):
-    # if input.dtype == int:
-    #     input = im2double(input)
-    #     ref = im2double(ref)
     numPixels = input.size
     sqrdErr = np.sum((input[:] - ref[:]) ** 2) / numPixels
     errEst = 10 * np.log10(1 / sqrdErr)
@@ -361,6 +299,7 @@ def train_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion):
             plt.title('Current PSNR: %f' % curError)
             plt.show()
 
+
 class PairwiseDistance(nn.Module):
     def __init__(self, p=2, eps=1e-6):
         super(PairwiseDistance, self).__init__()
@@ -376,9 +315,9 @@ def pairwise_distance(x1, x2, p=2, eps=1e-6):
     out = torch.pow(diff + eps, p)
     return out
 
+
 def train():
     [depthNet, colorNet, depthOptimizer, colorOptimizer] = load_networks(True)
-    # criterion = nn.MSELoss(reduce=False)
     criterion = PairwiseDistance()
     train_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion)
 
