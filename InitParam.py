@@ -1,7 +1,7 @@
 import os
 import numpy as np
 
-def get_folder_content(folderPath,extension):
+def get_folder_content(folderPath,extension='png'):
     contentNames=[]
     contentPaths=[]
     numContents=0
@@ -73,10 +73,10 @@ _, param.testNames, _ = get_folder_content(param.testData, '.h5')
 param.trainNet = 'TrainingData'
 
 
-param.isContinue = True
+param.isContinue = False
 param.startIter = -1
 
-param.testNetIter = 100
+param.testNetIter = 10
 param.printInfoIter = 5
 
 

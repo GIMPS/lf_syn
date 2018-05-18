@@ -7,32 +7,33 @@ from torchvision import datasets, models, transforms
 import time
 import os
 import copy
-from Net import depthNetModel,colorNetModel
+from Net import depthNetModel, colorNetModel
 from math import floor
-from InitParam import param,novelView,inputView,get_folder_content
-from PrepareData import*
+from InitParam import param, novelView, inputView, get_folder_content
+from PrepareData import *
 import warnings
+
 warnings.filterwarnings("ignore")
 import h5py
 import re
 import matplotlib.pyplot as plt
 
-def load_networks(isTraining = False):
 
+def load_networks(isTraining=False):
     depthNet = depthNetModel()
     colorNet = colorNetModel()
 
-    depthOptimizer = optim.Adam(depthNet.parameters(), lr=param.alpha,betas=(param.beta1,param.beta2),eps=param.eps)
+    depthOptimizer = optim.Adam(depthNet.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
     colorOptimizer = optim.Adam(colorNet.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
 
     if isTraining:
-        netFolder=param.trainNet
+        netFolder = param.trainNet
         netName, _, _ = get_folder_content(netFolder, '.tar')
 
         if param.isContinue and netName:
             tokens = netName[0].split('-')[1].split('.')[0]
             param.startIter = int(tokens)
-            checkpoint = torch.load(netFolder + '/'+netName[0])
+            checkpoint = torch.load(netFolder + '/' + netName[0])
             depthNet.load_state_dict(checkpoint['depthNet'])
             colorNet.load_state_dict(checkpoint['colorNet'])
             depthOptimizer.load_state_dict(checkpoint['depthOptimizer'])
@@ -49,10 +50,7 @@ def load_networks(isTraining = False):
         depthOptimizer.load_state_dict(checkpoint['depthOptimizer'])
         colorOptimizer.load_state_dict(checkpoint['colorOptimizer'])
 
-
-    return depthNet,colorNet,depthOptimizer,colorOptimizer
-
-
+    return depthNet, colorNet, depthOptimizer, colorOptimizer
 
 
 def read_training_data(fileName, isTraining, it=0):
@@ -62,7 +60,7 @@ def read_training_data(fileName, isTraining, it=0):
     useGPU = param.useGPU
 
     f = h5py.File(fileName, "r")
-    fileInfo=[]
+    fileInfo = []
     for item in f.keys():
         fileInfo.append(item)
     numItems = len(fileInfo)
@@ -87,21 +85,35 @@ def read_training_data(fileName, isTraining, it=0):
             s = f[dataName].shape
             # print(dataName)
             # print(s)
+            # if not isTraining:
+            #     features = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
+            # else:
+            #     features = f[dataName][startInd:startInd + batchSize, 0:s[1], 0:s[2], 0:s[3]]
+            #     features = np.transpose(features,(3,2,1,0))
             features = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
             features = torch.from_numpy(features)
             # wrap them in Variable
             if useGPU:
-                features=features.cuda()
+                features = features.cuda()
             else:
-                features= features
+                features = features
 
         if dataName == 'GT':
             s = f[dataName].shape
             # print(dataName)
             # print(s)
+            # if not isTraining:
+            #     reference = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
+            # else:
+            #     reference = f[dataName][startInd:startInd + batchSize, 0:s[1], 0:s[2], 0:s[3]]
+            #     reference = reference.ravel('C')
+            #     reference.shape = batchSize,s[1],s[2],s[3]
+            #     reference = np.transpose(reference, (3, 2, 1, 0))
+            #     print(reference[10,10,2,:])
             reference = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
-            reference = crop_img(reference, depthBorder+colorBorder)
-            reference = torch.from_numpy(reference )
+            # print(reference[0, 0, 0, :])
+            reference = crop_img(reference, depthBorder + colorBorder)
+            reference = torch.from_numpy(reference)
             # wrap them in Variable
             if useGPU:
                 reference = reference.cuda()
@@ -112,8 +124,13 @@ def read_training_data(fileName, isTraining, it=0):
             s = f[dataName].shape
             # print(dataName)
             # print(s)
+            # if not isTraining:
+            #     images = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
+            # else:
+            #     images = f[dataName][startInd:startInd + batchSize, 0:s[1], 0:s[2], 0:s[3]]
+            #     images = np.transpose(images,(3,2,1,0))
             images = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
-            images= torch.from_numpy(images)
+            images = torch.from_numpy(images)
             # wrap them in Variable
             if useGPU:
                 images = images.cuda()
@@ -124,6 +141,11 @@ def read_training_data(fileName, isTraining, it=0):
             s = f[dataName].shape
             # print(dataName)
             # print(s)
+            # if not isTraining:
+            #     refPos = f[dataName][0:2, startInd:startInd + batchSize]
+            # else:
+            #     refPos = f[dataName][startInd:startInd + batchSize, 0:2]
+            #     refPos = np.transpose(refPos,(1,0))
             refPos = f[dataName][0:2, startInd:startInd + batchSize]
             # refPos = torch.from_numpy(refPos)
             # # wrap them in Variable
@@ -132,63 +154,62 @@ def read_training_data(fileName, isTraining, it=0):
             # else:
             #     refPos = refPos
 
-    f .close()
+    f.close()
     return images, features, reference, refPos
 
 
 def prepare_color_features_grad(depth, images, refPos, curFeatures, indNan, dzdx):
     delta = 0.01
-
+    # print(dzdx[4,4,4,:])
     depthP = depth + delta
     featuresP, indNanP = prepare_color_features(depthP, images, refPos)
-
-    grad = (featuresP - curFeatures) / delta * dzdx
-    tmp = grad[:,:, 1: - 2,:]
+    grad = (featuresP - np.transpose(curFeatures.data.numpy(),(2,3,1,0))) / delta * dzdx
+    tmp = grad[:, :, 1: - 2, :]
     tmp[indNan | indNanP] = 0
-    grad[:,:, 1:- 2,:] = tmp
-
-    dzdx = sum(grad, 3)
-
+    grad[:, :, 1:- 2, :] = tmp
+    dzdx = np.sum(grad, 2)
     return dzdx
 
 
-def evaluate_system(depthNet, colorNet, depthOptimizer,colorOptimizer,criterion,images, refPos, isTraining, depthFeatures, reference, isTestDuringTraining):
-
+def evaluate_system(depthNet, colorNet, depthOptimizer=None, colorOptimizer=None, criterion=None, images=None,
+                    refPos=None, isTraining=False, depthFeatures=None, reference=None, isTestDuringTraining=False):
     # Estimating the depth (section 3.1)
     if not isTraining:
         print("Estimating depth\n")
         print("----------------\n")
         print("Extracting depth features")
         dfTime = time.time()
-        deltaY = inputView.Y - refPos[0,:]
-        deltaX = inputView.X - refPos[1,:]
-        depthFeatures =prepare_depth_features(images, deltaY, deltaX)
-        if param.useGPU:
-            depthFeatures = Variable(depthFeatures.cuda())
-        else:
-            depthFeatures = Variable(depthFeatures)
+        deltaY = inputView.Y - refPos[0]
+        deltaX = inputView.X - refPos[1]
+        depthFeatures = prepare_depth_features(images, deltaY, deltaX)
+        depthFeatures = np.expand_dims(depthFeatures, axis=3)
+        depthFeatures = torch.from_numpy(depthFeatures).float()
+        # if param.useGPU:
+        #     depthFeatures = Variable(depthFeatures.cuda())
+        # else:
+        #     depthFeatures = Variable(depthFeatures)
 
         print('Done in {:.0f} seconds\n'.format(time.time() - dfTime))
-
     if not isTraining:
         print('Evaluating depth network ...')
         dTime = time.time()
     depthFeatures = np.transpose(depthFeatures, (3, 2, 0, 1))  # todo
-    depthFeatures = Variable(depthFeatures,requires_grad=True)
+    depthFeatures = Variable(depthFeatures, requires_grad=True)
     depthRes = depthNet(depthFeatures)
-    depth = depthRes/ (param.origAngRes - 1)
-    depth=depth.data.numpy()
-    depth = np.transpose(depth, (2,3,1,0)) #todo
+    depth = depthRes / (param.origAngRes - 1)
+    depth = depth.data.numpy()
+    depth = np.transpose(depth, (2, 3, 1, 0))  # todo
     if not isTraining:
         print('Done in {:.0f} seconds\n'.format(time.time() - dTime))
-
 
     # Estimating the final color (section 3.2)
     if not isTraining:
         print("Preparing color features ...")
         cfTime = time.time()
 
-        images=images.reshape((images.shape[0], images.shape[1], -1))
+        images = images.reshape((images.shape[0], images.shape[1], -1))
+        images = np.expand_dims(images, axis=3)
+        images = torch.from_numpy(images)
 
     colorFeatures, indNan = prepare_color_features(depth, images, refPos)
 
@@ -198,17 +219,20 @@ def evaluate_system(depthNet, colorNet, depthOptimizer,colorOptimizer,criterion,
     if not isTraining:
         print('Evaluating color network ...')
         cfTime = time.time()
-    colorFeatures=torch.from_numpy(colorFeatures).float()
     colorFeatures = np.transpose(colorFeatures, (3, 2, 0, 1))  # todo
-    colorFeatures = Variable(colorFeatures,requires_grad=True)
+    colorFeatures = torch.from_numpy(colorFeatures).float()
+    colorFeatures = Variable(colorFeatures, requires_grad=True)
     colorRes = colorNet(colorFeatures)
 
     # colorRes = evaluate_net(colorNet, colorFeatures, [], True)
     finalImg = colorRes
-
+    finalImg = np.transpose(finalImg.data.numpy(), (2, 3, 1, 0))
+    #
+    # from cv2 import imwrite
+    # imwrite('./Results/Seahorse/Images/tmp.png', (reference.numpy()[:,:,:,5] * 255).astype(int))
+    # print('done')
     if not isTraining:
         print('Done in {:.0f} seconds\n'.format(time.time() - cfTime))
-
     # Backpropagation
     if isTraining and not isTestDuringTraining:
         # dzdx = vl_nnpdist(finalImg, reference, 2, 1, 'noRoot', true, 'aggregate', true) / numel(reference)
@@ -221,40 +245,54 @@ def evaluate_system(depthNet, colorNet, depthOptimizer,colorOptimizer,criterion,
         #
         # depthRes[-1].dzdx = dzdx / (param.origAngRes - 1)
         # depthRes = evaluate_net(depthNet, depthFeatures, depthRes, False)
-        loss = criterion(colorRes, Variable(reference))
+        loss = criterion(colorRes, Variable(np.transpose(reference, (3, 2, 0, 1))))/reference.numpy().size
+        # print(reference[1,1,1,1])
         depthOptimizer.zero_grad()
         colorOptimizer.zero_grad()
-        loss.backward()
+        loss.backward(torch.ones(10, 3, 36, 36))
+        dzdx = colorFeatures.grad
+        dzdx = np.transpose(dzdx.data.numpy(),(2,3,1,0))
+        # print(dzdx)
+        dzdx = prepare_color_features_grad(depth, images, refPos, colorFeatures, indNan, dzdx)
+        dzdx = np.expand_dims(dzdx, 2)
+        dzdx = np.transpose(dzdx, (3, 2, 0, 1 ))
+        dzdx = torch.from_numpy(dzdx / (param.origAngRes - 1)).float()
+        # print(dzdx.shape)
+        # print(depthRes.data.shape)
+        # depthRes.grad = Variable(dzdx)
+        # depthRes.grad = Variable(torch.zeros(10,1,48,48))
+        # depthRes.backward(torch.ones(10, 1, 48, 48))
+        depthRes.backward(dzdx)
+        # print(depthNet.layer[0].bias.grad)
         colorOptimizer.step()
         depthOptimizer.step()
 
-
-
     return finalImg
 
-def compute_psnr(input, ref):
-    # input = im2double(input)
-    # ref = im2double(ref)
 
-    numPixels = len(input)
-    sqrdErr = np.sum((input[:] - ref[:])**2) / numPixels
+def compute_psnr(input, ref):
+    # if input.dtype == int:
+    #     input = im2double(input)
+    #     ref = im2double(ref)
+    numPixels = input.size
+    sqrdErr = np.sum((input[:] - ref[:]) ** 2) / numPixels
     errEst = 10 * np.log10(1 / sqrdErr)
     return errEst
 
-def test_during_training(depthNet, colorNet,depthOptimizer,colorOptimizer, criterion,):
+
+def test_during_training(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion):
     sceneNames = param.testNames
-    fid = open(param.trainNet+'/error.txt', 'a')
+    fid = open(param.trainNet + '/error.txt', 'a')
     numScenes = len(sceneNames)
     error = 0
 
     for k in range(numScenes):
         # read input data
         images, depthFeatures, reference, refPos = read_training_data(sceneNames[k], False)
-
         # evaluate the network and accumulate error
-        finalImg = evaluate_system(depthNet, colorNet,depthOptimizer,colorOptimizer, criterion, images, refPos, True, depthFeatures, reference, True)
+        finalImg = evaluate_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion, images, refPos, True,
+                                   depthFeatures, reference, True)
 
-        finalImg=np.transpose(finalImg.data.numpy(),(2,3,1,0))
         reference = reference.numpy()
         finalImg = crop_img(finalImg, 10)
         reference = crop_img(reference, 10)
@@ -262,29 +300,28 @@ def test_during_training(depthNet, colorNet,depthOptimizer,colorOptimizer, crite
         curError = compute_psnr(finalImg, reference)
         error = error + curError / numScenes
     print(error)
-    fid.write(str(error)+'\n')
+    fid.write(str(error) + '\n')
     fid.close()
     return error
 
 
 def get_test_error(errorFolder):
-    testError= []
+    testError = []
     if param.isContinue:
-        fid = open(errorFolder+'/error.txt', 'r')
+        fid = open(errorFolder + '/error.txt', 'r')
         for line in fid:
             testError.append(str(line))
         fid.close()
     else:
-        fid = open(errorFolder+ '/error.txt', 'w')
+        fid = open(errorFolder + '/error.txt', 'w')
         fid.close()
     return testError
 
 
-def train_system(depthNet, colorNet, depthOptimizer,colorOptimizer, criterion ):
-
+def train_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion):
     testError = get_test_error(param.trainNet)
-    #count=0
-    it = param.startIter+1
+    # count=0
+    it = param.startIter + 1
 
     while True:
         it += 1
@@ -296,18 +333,19 @@ def train_system(depthNet, colorNet, depthOptimizer,colorOptimizer, criterion ):
         depthNet.train(True)  # Set model to training mode
         colorNet.train(True)
         images, depthFeat, reference, refPos = read_training_data(param.trainingNames[0], True, it)
-        evaluate_system(depthNet, colorNet,depthOptimizer,colorOptimizer, criterion, images, refPos, True, depthFeat, reference, False)
+        evaluate_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion, images, refPos, True, depthFeat,
+                        reference, False)
 
-        if it % param.testNetIter == 0 or True :
+        if it % param.testNetIter == 0:
             # save network
             _, curNetName, _ = get_folder_content(param.trainNet, '.tar')
-            state={
+            state = {
                 'depthNet': depthNet.state_dict(),
                 'colorNet': colorNet.state_dict(),
                 'depthOptimizer': depthOptimizer.state_dict(),
                 'colorOptimizer': colorOptimizer.state_dict()
             }
-            torch.save(state, param.trainNet+'/Net-'+ str(it)+'.tar')
+            torch.save(state, param.trainNet + '/Net-' + str(it) + '.tar')
 
             # delete network
             if curNetName:
@@ -316,18 +354,33 @@ def train_system(depthNet, colorNet, depthOptimizer,colorOptimizer, criterion ):
             depthNet.train(False)  # Set model to validation mode
             colorNet.train(False)
             print('\nStarting the validation process\n')
-            curError = test_during_training(depthNet, colorNet,depthOptimizer,colorOptimizer, criterion)
+            curError = test_during_training(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion)
             testError.append(curError)
             plt.figure()
             plt.plot(testError)
             plt.title('Current PSNR: %f' % curError)
             plt.show()
 
+class PairwiseDistance(nn.Module):
+    def __init__(self, p=2, eps=1e-6):
+        super(PairwiseDistance, self).__init__()
+        self.norm = p
+        self.eps = eps
+
+    def forward(self, x1, x2):
+        return pairwise_distance(x1, x2, self.norm, self.eps)
+
+
+def pairwise_distance(x1, x2, p=2, eps=1e-6):
+    diff = torch.abs(x1 - x2)
+    out = torch.pow(diff + eps, p)
+    return out
 
 def train():
-    [depthNet, colorNet,depthOptimizer,colorOptimizer]=load_networks(True)
-    criterion = nn.MSELoss()
-    train_system(depthNet, colorNet,depthOptimizer,colorOptimizer,criterion)
+    [depthNet, colorNet, depthOptimizer, colorOptimizer] = load_networks(True)
+    # criterion = nn.MSELoss(reduce=False)
+    criterion = PairwiseDistance()
+    train_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion)
 
 
 if __name__ == "__main__":
