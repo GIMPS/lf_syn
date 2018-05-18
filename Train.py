@@ -106,12 +106,12 @@ def read_training_data(fileName, isTraining, it=0):
 
         if dataName == 'RP':
             refPos = f[dataName][0:2, startInd:startInd + batchSize]
-            # refPos = torch.from_numpy(refPos)
-            # # wrap them in Variable
-            # if useGPU:
-            #     refPos = refPos .cuda()
-            # else:
-            #     refPos = refPos
+            refPos = torch.from_numpy(refPos)
+            # wrap them in Variable
+            if useGPU:
+                refPos = refPos .cuda()
+            else:
+                refPos = refPos
 
     f.close()
     return images, features, reference, refPos
@@ -121,11 +121,11 @@ def prepare_color_features_grad(depth, images, refPos, curFeatures, indNan, dzdx
     delta = 0.01
     depthP = depth + delta
     featuresP, indNanP = prepare_color_features(depthP, images, refPos)
-    grad = (featuresP - np.transpose(curFeatures.data.numpy(), (2, 3, 1, 0))) / delta * dzdx
+    grad = (featuresP - curFeatures.data.permute(2, 3, 1, 0)) / delta * dzdx
     tmp = grad[:, :, 1: - 2, :]
     tmp[indNan | indNanP] = 0
     grad[:, :, 1:- 2, :] = tmp
-    dzdx = np.sum(grad, 2)
+    dzdx = torch.sum(grad, 2)
     return dzdx
 
 
@@ -177,7 +177,6 @@ def evaluate_system(depthNet, colorNet, depthOptimizer=None, colorOptimizer=None
     if not isTraining:
         print('Evaluating color network ...')
         cfTime = time.time()
-    colorFeatures = torch.from_numpy(colorFeatures).float()
     colorFeatures = colorFeatures.permute(3, 2, 0, 1)  # todo
     colorFeatures = Variable(colorFeatures, requires_grad=True)
     colorRes = colorNet(colorFeatures)
@@ -197,11 +196,11 @@ def evaluate_system(depthNet, colorNet, depthOptimizer=None, colorOptimizer=None
         loss.backward(torch.ones(10, 3, 36, 36))
 
         dzdx = colorFeatures.grad
-        dzdx = np.transpose(dzdx.data.numpy(), (2, 3, 1, 0))
+        dzdx = dzdx.data.permute(2, 3, 1, 0)
         dzdx = prepare_color_features_grad(depth, images, refPos, colorFeatures, indNan, dzdx)
-        dzdx = np.expand_dims(dzdx, 2)
-        dzdx = np.transpose(dzdx, (3, 2, 0, 1))
-        dzdx = torch.from_numpy(dzdx / (param.origAngRes - 1)).float()
+        dzdx = torch.unsqueeze(dzdx, 2)
+        dzdx = dzdx.permute(3, 2, 0, 1)
+        dzdx = dzdx / (param.origAngRes - 1)
 
         depthRes.backward(dzdx)
 

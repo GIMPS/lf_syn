@@ -11,7 +11,6 @@ def make_dir(inputPath):
     if not os.path.exists(inputPath):
         os.makedirs(inputPath)
 
-
 def crop_img(input, pad):
     return input[pad:- pad, pad: - pad]
 
@@ -182,20 +181,21 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
     # print(featuresStack[122,233,:])
     return featuresStack
 
+def isnan(x):
+    return x != x
 
 def prepare_color_features(depth, images, refPos):
     images = crop_img(images, param.depthBorder)
     warpedImages = warp_all_images(images, depth, refPos)
-    indNan = np.isnan(warpedImages)
+    warpedImages=torch.from_numpy(warpedImages)
+    if param.useGPU:
+        warpedImages=warpedImages.cuda()
+    warpedImages = warpedImages.float()
+    indNan = isnan(warpedImages)
     warpedImages[indNan] = 0
-
-    # warpedImages=torch.from_numpy(warpedImages)
-    # if param.useGPU:
-    #     warpedImages=warpedImages.cuda()
     [h, w, _, _] = depth.shape
-    refPos = refPos.reshape((2, 1, 1, -1))
-    colorFeatures = np.concatenate((depth, warpedImages, np.tile(refPos[0, :, :, :] - 1.5, (h, w, 1, 1)), np.tile(
-        refPos[1, :, :, :] - 1.5, (h, w, 1, 1))), axis=2)
+    refPos = refPos.view(2, 1, 1, -1)
+    colorFeatures = torch.cat((depth, warpedImages, (refPos[0, :, :, :] - 1.5).repeat(h, w, 1, 1), (refPos[1, :, :, :] - 1.5).repeat(h, w, 1, 1)), 2)
     return colorFeatures, indNan
 
 
