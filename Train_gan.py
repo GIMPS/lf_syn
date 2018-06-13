@@ -179,7 +179,7 @@ def prepare_color_features_grad(depth, images, refPos, curFeatures, indNan, dzdx
     return dzdx
 
 
-def evaluate_system(depthNet, colorNet, netD, depthOptimizer=None, colorOptimizer=None, criterion=None, images=None,
+def evaluate_system(depthNet, colorNet, netD, depthOptimizer=None, colorOptimizer=None, optimizerD=None, criterion=None, images=None,
                     refPos=None, isTraining=False, depthFeatures=None, reference=None, isTestDuringTraining=False):
     # Estimating the depth (section 3.1)
     if not isTraining:
@@ -245,21 +245,19 @@ def evaluate_system(depthNet, colorNet, netD, depthOptimizer=None, colorOptimize
     # Backpropagation
     if isTraining and not isTestDuringTraining:
 
-        real_img = reference
-        fake_img = finalImg
+        real_img = Variable(reference).permute(3, 2, 0, 1)
+        fake_img = colorRes
         netD.zero_grad()
-        real_out = netD(real_img).mean()
+        real_out = netD(real_img ).mean()
         fake_out = netD(fake_img).mean()
         d_loss = 1 - real_out + fake_out
         d_loss.backward(retain_graph=True)
         optimizerD.step()
-
-        g_loss = generator_criterion(fake_out, fake_img, real_img)
+        g_loss = criterion(fake_out, fake_img, real_img)
 
         depthOptimizer.zero_grad()
         colorOptimizer.zero_grad()
-
-        g_loss.backward(torch.ones(10, 3, 36, 36))
+        g_loss.backward()
 
         dzdx = colorFeatures.grad
         dzdx = dzdx.data.permute(2, 3, 1, 0)
@@ -283,7 +281,7 @@ def compute_psnr(input, ref):
     return errEst
 
 
-def test_during_training(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion):
+def test_during_training(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, optimizerD,criterion):
     sceneNames = param.testNames
     fid = open(param.trainNet + '/error.txt', 'a')
     numScenes = len(sceneNames)
@@ -293,7 +291,7 @@ def test_during_training(depthNet, colorNet, depthOptimizer, colorOptimizer, cri
         # read input data
         images, depthFeatures, reference, refPos = read_training_data(sceneNames[k], False)
         # evaluate the network and accumulate error
-        finalImg = evaluate_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion, images, refPos, True,
+        finalImg = evaluate_system(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, optimizerD,criterion, images, refPos, True,
                                    depthFeatures, reference, True)
 
         reference = reference.numpy()
@@ -321,7 +319,7 @@ def get_test_error(errorFolder):
     return testError
 
 
-def train_system(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, criterion):
+def train_system(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, optimizerD,criterion):
     testError = get_test_error(param.trainNet)
     # count=0
     it = param.startIter + 1
@@ -336,7 +334,7 @@ def train_system(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, criter
         depthNet.train(True)  # Set model to training mode
         colorNet.train(True)
         images, depthFeat, reference, refPos = read_training_data(param.trainingNames[0], True, it)
-        evaluate_system(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion, images, refPos, True, depthFeat,
+        evaluate_system(depthNet, colorNet, netD, depthOptimizer, colorOptimizer, optimizerD,criterion, images, refPos, True, depthFeat,
                         reference, False)
 
         if it % param.testNetIter == 0:
@@ -357,7 +355,7 @@ def train_system(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, criter
             depthNet.train(False)  # Set model to validation mode
             colorNet.train(False)
             print('\nStarting the validation process\n')
-            curError = test_during_training(depthNet, colorNet, depthOptimizer, colorOptimizer, criterion)
+            curError = test_during_training(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, optimizerD,criterion)
             testError.append(curError)
             plt.figure()
             plt.plot(testError)
@@ -385,9 +383,10 @@ def train():
     [depthNet, colorNet, depthOptimizer, colorOptimizer] = load_networks(True)
     criterion = PairwiseDistance()
     netD = Discriminator()
+    optimizerD = optim.Adam(netD.parameters())
     generator_criterion = GeneratorLoss()
 
-    train_system(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, generator_criterion)
+    train_system(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, optimizerD,generator_criterion)
 
 
 if __name__ == "__main__":
