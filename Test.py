@@ -1,53 +1,44 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-from torch.autograd import Variable
-from torchvision import datasets, models, transforms
-import time
-import os
-import copy
-from Net import depthNetModel,colorNetModel
-from math import floor
-from InitParam import param,novelView,inputView,get_folder_content
-from PrepareData import*
 import warnings
+
+from init_param import novelView
+from prepare_data import *
+
 warnings.filterwarnings("ignore")
-import h5py
-import re
-import matplotlib.pyplot as plt
-from Train import load_networks,read_illum_images,evaluate_system,compute_psnr
+from train import load_networks, read_illum_images, evaluate_system, compute_psnr
 from skimage.color import rgb2hsv, hsv2rgb
-from skimage.measure import compare_ssim as ssim
+import pytorch_ssim
+from torch.autograd import Variable
 from cv2 import imwrite
 
-def adjust_tone(input):
 
+def adjust_tone(input):
     input[input > 1] = 1
     input[input < 0] = 0
-    output = input ** (1/1.5)
+    output = input ** (1 / 1.5)
     output = rgb2hsv(output)
     output[:, :, 1] = output[:, :, 1] * 1.5
     output = hsv2rgb(output)
     return output
 
+
 def get_img_ind(inPos):
     ind = int(inPos * (param.origAngRes - 1))
     return ind
 
-def write_error(estimated, reference, resultPath):
-    quantizedEst = (estimated * 255).astype(int)
-    quantizedRef = (reference * 255).astype(int)
-    curPSNR = compute_psnr(estimated, reference)
-    curSSIM = ssim(quantizedEst, quantizedRef,multichannel=True)
 
-    fid = open(resultPath+'/ObjectiveQuality.txt', 'w')
+def write_error(estimated, reference, resultPath):
+    curPSNR = compute_psnr(estimated, reference)
+    estimated = Variable(torch.from_numpy(np.expand_dims(estimated,axis=3)).permute(3,2,0,1).float())
+    reference = Variable(torch.from_numpy(np.expand_dims(reference,axis=3)).permute(3,2,0,1).float())
+    curSSIM = pytorch_ssim.ssim(estimated, reference).data[0]
+
+    fid = open(resultPath + '/ObjectiveQuality.txt', 'w')
     fid.write('PSNR: %3.2f\n' % curPSNR)
     fid.write('SSIM: %1.3f\n' % curSSIM)
     fid.close()
 
-def synthesize_novel_views(depthNet, colorNet, inputLF, fullLF, resultPath):
 
+def synthesize_novel_views(depth_net, color_net, inputLF, fullLF, resultPath):
     numNovelViews = len(novelView.Y)
 
     # for vi in range(numNovelViews):
@@ -56,58 +47,54 @@ def synthesize_novel_views(depthNet, colorNet, inputLF, fullLF, resultPath):
         indX = get_img_ind(novelView.X[vi])
 
         curRefPos = np.array([novelView.Y[vi], novelView.X[vi]])
-        curRefPos = np.expand_dims(curRefPos,axis=1)
+        curRefPos = np.expand_dims(curRefPos, axis=1)
+        curRefPos = torch.from_numpy(curRefPos).float()
         # performs the whole process of extracting features, evaluating the
         # two sequential networks and generating the output synthesized image
-        print('\nView %02d of %02d\n' % (vi, numNovelViews))
-        print('**********************************\n')
-        synthesizedView = evaluate_system(depthNet, colorNet, images = inputLF, refPos = curRefPos)
+        print('View %02d of %02d' % (vi, numNovelViews))
+        print('**********************************')
+        synthesizedView = evaluate_system(depth_net, color_net, images=inputLF, refPos=curRefPos)
 
-        synthesizedView = synthesizedView[:,:,:,-1]
+        synthesizedView = synthesizedView[:, :, :, -1]
         # crop the result and reference images
         curEst = crop_img(synthesizedView, 10)
-        curRef = crop_img(fullLF[:,:,:, indY, indX], param.depthBorder + param.colorBorder + 10)
+        curRef = crop_img(fullLF[:, :, :, indY, indX], param.depthBorder + param.colorBorder + 10)
 
-        # quantize the reference and estimated image to 8 bit for accurate
-        # numerical evaluation
-        # quantizedEst = (curEst * 255).astype(int)
-        # quantizedRef = (curRef * 255).astype(int)
 
         # write the numerical evaluation and the final image
         if indY == 0 and indX == 0:
             write_error(curEst, curRef, resultPath)
-        # print(curEst)
-        imwrite(resultPath+'/Images/'+('%02d_%02d.png' % (indY, indX)), (adjust_tone(curEst)*255).astype(int))
+        imwrite(resultPath + '/Images/' + ('%02d_%02d.png' % (indY, indX)), (adjust_tone(curEst) * 255).astype(int))
+
 
 def test():
     # Initialization
     sceneFolder = './Scenes'
     resultFolder = './Results'
 
-
     # load the pre-trained networks
-    [depthNet, colorNet,_,_] = load_networks()
-
+    [depth_net, color_net, _, _] = load_networks()
 
     # Generate novel views for each scene
     [sceneNames, scenePaths, numScenes] = get_folder_content(sceneFolder)
 
     for ns in range(numScenes):
-        print('**********************************\n')
-        print('Working on the '+sceneNames[ns][0:- 4]+'dataset\n')
+        print('**********************************')
+        print('Working on the ' + sceneNames[ns][0:- 4] + 'dataset')
 
-        resultPath = resultFolder+ '/'+ sceneNames[ns][0:- 4]
-        make_dir( resultPath + '/Images')
+        resultPath = resultFolder + '/' + sceneNames[ns][0:- 4]
+        make_dir(resultPath + '/Images')
 
-        print('Loading input light field ...')
+        print('Loading input light field ...',end = '')
         [curFullLF, curInputLF] = read_illum_images(scenePaths[ns])
-        print('Done\n')
-        print('**********************************\n')
+        print('Done')
+        print('**********************************')
 
-        print('\nSynthesizing novel views\n')
-        print('--------------------------\n')
-        synthesize_novel_views(depthNet, colorNet, curInputLF, curFullLF, resultPath)
-        print('\n\n\n')
+        print('Synthesizing novel views')
+        print('--------------------------')
+        synthesize_novel_views(depth_net, color_net, curInputLF, curFullLF, resultPath)
+        print()
+
 
 if __name__ == "__main__":
     test()

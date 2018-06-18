@@ -1,10 +1,11 @@
-import torch.nn as nn
+import time
+import warnings
+
 import torch.optim as optim
 from torch.autograd import Variable
-import time
-from Net import depthNetModel, colorNetModel
-from PrepareData import *
-import warnings
+
+from model import DepthNetModel, ColorNetModel, Discriminator
+from prepare_data import *
 
 warnings.filterwarnings("ignore")
 import h5py
@@ -12,61 +13,17 @@ import matplotlib.pyplot as plt
 
 from loss import GeneratorLoss
 
-import torch.nn.functional as F
-from torch import nn
-
-class Discriminator(nn.Module):
-    def __init__(self):
-        super(Discriminator, self).__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2),
-
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(512, 1024, kernel_size=1),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(1024, 1, kernel_size=1)
-        )
-
-    def forward(self, x):
-        batch_size = x.size(0)
-        return F.sigmoid(self.net(x).view(batch_size))
-
 
 def load_networks(isTraining=False):
-    depthNet = depthNetModel()
-    colorNet = colorNetModel()
+    depth_net = DepthNetModel()
+    color_net = ColorNetModel()
+    d_net = Discriminator()
 
-    depthOptimizer = optim.Adam(depthNet.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
-    colorOptimizer = optim.Adam(colorNet.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
+    depth_optimizer = optim.Adam(depth_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2),
+                                 eps=param.eps)
+    color_optimizer = optim.Adam(color_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2),
+                                 eps=param.eps)
+    d_optimizer = optim.Adam(d_net.parameters())
 
     if isTraining:
         netFolder = param.trainNet
@@ -76,22 +33,26 @@ def load_networks(isTraining=False):
             tokens = netName[0].split('-')[1].split('.')[0]
             param.startIter = int(tokens)
             checkpoint = torch.load(netFolder + '/' + netName[0])
-            depthNet.load_state_dict(checkpoint['depthNet'])
-            colorNet.load_state_dict(checkpoint['colorNet'])
-            depthOptimizer.load_state_dict(checkpoint['depthOptimizer'])
-            colorOptimizer.load_state_dict(checkpoint['colorOptimizer'])
+            depth_net.load_state_dict(checkpoint['depth_net'])
+            color_net.load_state_dict(checkpoint['color_net'])
+            d_net.load_state_dict(checkpoint['d_net'])
+            depth_optimizer.load_state_dict(checkpoint['depth_optimizer'])
+            color_optimizer.load_state_dict(checkpoint['color_optimizer'])
+            d_optimizer.load_state_dict(checkpoint['d_optimizer'])
         else:
             param.isContinue = False
 
     else:
         netFolder = param.testNet
-        checkpoint = torch.load(netFolder + '/Net.tar')
-        depthNet.load_state_dict(checkpoint['depthNet'])
-        colorNet.load_state_dict(checkpoint['colorNet'])
-        depthOptimizer.load_state_dict(checkpoint['depthOptimizer'])
-        colorOptimizer.load_state_dict(checkpoint['colorOptimizer'])
+        checkpoint = torch.load(netFolder + '/Net_GAN.tar')
+        depth_net.load_state_dict(checkpoint['depth_net'])
+        color_net.load_state_dict(checkpoint['color_net'])
+        d_net.load_state_dict(checkpoint['d_net'])
+        depth_optimizer.load_state_dict(checkpoint['depth_optimizer'])
+        color_optimizer.load_state_dict(checkpoint['color_optimizer'])
+        d_optimizer.load_state_dict(checkpoint['d_optimizer'])
 
-    return depthNet, colorNet, depthOptimizer, colorOptimizer
+    return depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer
 
 
 def read_training_data(fileName, isTraining, it=0):
@@ -105,8 +66,8 @@ def read_training_data(fileName, isTraining, it=0):
     for item in f.keys():
         fileInfo.append(item)
     numItems = len(fileInfo)
-    maxNumPatches = f[fileInfo[0]].shape[-1]
-    numImages = floor(maxNumPatches / batchSize) * batchSize
+    maxnum_patches = f[fileInfo[0]].shape[-1]
+    numImages = floor(maxnum_patches / batchSize) * batchSize
 
     if isTraining:
         startInd = it * batchSize % numImages
@@ -126,42 +87,29 @@ def read_training_data(fileName, isTraining, it=0):
             s = f[dataName].shape
             features = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
             features = torch.from_numpy(features)
-            # wrap them in Variable
             if useGPU:
                 features = features.cuda()
-            else:
-                features = features
 
         if dataName == 'GT':
             s = f[dataName].shape
             reference = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
-            # print(reference[0, 0, 0, :])
             reference = crop_img(reference, depthBorder + colorBorder)
             reference = torch.from_numpy(reference)
-            # wrap them in Variable
             if useGPU:
                 reference = reference.cuda()
-            else:
-                reference = reference
 
         if dataName == 'IN':
             s = f[dataName].shape
             images = f[dataName][0:s[0], 0:s[1], 0:s[2], startInd:startInd + batchSize]
             images = torch.from_numpy(images)
-            # wrap them in Variable
             if useGPU:
                 images = images.cuda()
-            else:
-                images = images
 
         if dataName == 'RP':
             refPos = f[dataName][0:2, startInd:startInd + batchSize]
             refPos = torch.from_numpy(refPos)
-            # wrap them in Variable
             if useGPU:
-                refPos = refPos .cuda()
-            else:
-                refPos = refPos
+                refPos = refPos.cuda()
 
     f.close()
     return images, features, reference, refPos
@@ -179,84 +127,79 @@ def prepare_color_features_grad(depth, images, refPos, curFeatures, indNan, dzdx
     return dzdx
 
 
-def evaluate_system(depthNet, colorNet, netD, depthOptimizer=None, colorOptimizer=None, optimizerD=None, criterion=None, images=None,
+def evaluate_system(depth_net, color_net, d_net=None, depth_optimizer=None, color_optimizer=None, d_optimizer=None,
+                    criterion=None, images=None,
                     refPos=None, isTraining=False, depthFeatures=None, reference=None, isTestDuringTraining=False):
     # Estimating the depth (section 3.1)
     if not isTraining:
-        print("Estimating depth\n")
-        print("----------------\n")
-        print("Extracting depth features")
+        print("Estimating depth")
+        print("----------------")
+        print("Extracting depth features...",end='   ')
         dfTime = time.time()
         deltaY = inputView.Y - refPos[0]
         deltaX = inputView.X - refPos[1]
         depthFeatures = prepare_depth_features(images, deltaY, deltaX)
         depthFeatures = np.expand_dims(depthFeatures, axis=3)
         depthFeatures = torch.from_numpy(depthFeatures).float()
-        # if param.useGPU:
-        #     depthFeatures = Variable(depthFeatures.cuda())
-        # else:
-        #     depthFeatures = Variable(depthFeatures)
+        if param.useGPU:
+            depthFeatures = depthFeatures.cuda()
 
-        print('Done in {:.0f} seconds\n'.format(time.time() - dfTime))
-
-    ############################
-    # (1) Update D network: maximize D(x)-1-D(G(z))
-    ###########################
+        print('\b\b\b\bDone in {:.0f} seconds'.format(time.time() - dfTime),flush=True)
 
     if not isTraining:
-        print('Evaluating depth network ...')
+        print('Evaluating depth network ...',end='')
         dTime = time.time()
     depthFeatures = depthFeatures.permute(3, 2, 0, 1)  # todo
     depthFeatures = Variable(depthFeatures, requires_grad=True)
-    depthRes = depthNet(depthFeatures)
+    depthRes = depth_net(depthFeatures)
     depth = depthRes / (param.origAngRes - 1)
     depth = depth.data
     depth = depth.permute(2, 3, 1, 0)  # todo
     if not isTraining:
-        print('Done in {:.0f} seconds\n'.format(time.time() - dTime))
+        print('Done in {:.0f} seconds'.format(time.time() - dTime))
 
     # Estimating the final color (section 3.2)
     if not isTraining:
-        print("Preparing color features ...")
+        print("Preparing color features ...",end='')
         cfTime = time.time()
 
         images = images.reshape((images.shape[0], images.shape[1], -1))
         images = np.expand_dims(images, axis=3)
         images = torch.from_numpy(images)
+        if param.useGPU:
+            images = images.cuda()
 
     colorFeatures, indNan = prepare_color_features(depth, images, refPos)
 
     if not isTraining:
-        print('Done in {:.0f} seconds\n'.format(time.time() - cfTime))
+        print('Done in {:.0f} seconds'.format(time.time() - cfTime))
 
     if not isTraining:
-        print('Evaluating color network ...')
+        print('Evaluating color network ...',end='')
         cfTime = time.time()
     colorFeatures = colorFeatures.permute(3, 2, 0, 1)  # todo
     colorFeatures = Variable(colorFeatures, requires_grad=True)
-    colorRes = colorNet(colorFeatures)
+    colorRes = color_net(colorFeatures)
 
     finalImg = colorRes
     finalImg = np.transpose(finalImg.data.numpy(), (2, 3, 1, 0))
 
-
     if not isTraining:
-        print('Done in {:.0f} seconds\n'.format(time.time() - cfTime))
+        print('Done in {:.0f} seconds'.format(time.time() - cfTime))
     # Backpropagation
     if isTraining and not isTestDuringTraining:
-
         real_img = Variable(reference).permute(3, 2, 0, 1)
         fake_img = colorRes
-        netD.zero_grad()
-        real_out = netD(real_img ).mean()
-        fake_out = netD(fake_img).mean()
+        d_net.zero_grad()
+        real_out = d_net(real_img).mean()
+        fake_out = d_net(fake_img).mean()
         d_loss = 1 - real_out + fake_out
         d_loss.backward(retain_graph=True)
-        optimizerD.step()
+        d_optimizer.step()
         g_loss = criterion(fake_out, fake_img, real_img)
 
-        depthOptimizer.zero_grad()
-        colorOptimizer.zero_grad()
+        depth_optimizer.zero_grad()
+        color_optimizer.zero_grad()
         g_loss.backward()
 
         dzdx = colorFeatures.grad
@@ -268,8 +211,8 @@ def evaluate_system(depthNet, colorNet, netD, depthOptimizer=None, colorOptimize
 
         depthRes.backward(dzdx)
 
-        colorOptimizer.step()
-        depthOptimizer.step()
+        color_optimizer.step()
+        depth_optimizer.step()
 
     return finalImg
 
@@ -281,9 +224,9 @@ def compute_psnr(input, ref):
     return errEst
 
 
-def test_during_training(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, optimizerD,criterion):
+def test_during_training(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer, criterion):
     sceneNames = param.testNames
-    fid = open(param.trainNet + '/error.txt', 'a')
+    fid = open(param.trainNet + '/error_gan.txt', 'a')
     numScenes = len(sceneNames)
     error = 0
 
@@ -291,7 +234,8 @@ def test_during_training(depthNet, colorNet, netD,depthOptimizer, colorOptimizer
         # read input data
         images, depthFeatures, reference, refPos = read_training_data(sceneNames[k], False)
         # evaluate the network and accumulate error
-        finalImg = evaluate_system(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, optimizerD,criterion, images, refPos, True,
+        finalImg = evaluate_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer,
+                                   criterion, images, refPos, True,
                                    depthFeatures, reference, True)
 
         reference = reference.numpy()
@@ -300,7 +244,7 @@ def test_during_training(depthNet, colorNet, netD,depthOptimizer, colorOptimizer
 
         curError = compute_psnr(finalImg, reference)
         error = error + curError / numScenes
-    print(error)
+    print('Current PSNR: %.3f' % error)
     fid.write(str(error) + '\n')
     fid.close()
     return error
@@ -309,19 +253,18 @@ def test_during_training(depthNet, colorNet, netD,depthOptimizer, colorOptimizer
 def get_test_error(errorFolder):
     testError = []
     if param.isContinue:
-        fid = open(errorFolder + '/error.txt', 'r')
+        fid = open(errorFolder + '/error_gan.txt', 'r')
         for line in fid:
-            testError.append(str(line))
+            testError.append(float(line))
         fid.close()
     else:
-        fid = open(errorFolder + '/error.txt', 'w')
+        fid = open(errorFolder + '/error_gan.txt', 'w')
         fid.close()
     return testError
 
 
-def train_system(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, optimizerD,criterion):
+def train_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer, criterion):
     testError = get_test_error(param.trainNet)
-    # count=0
     it = param.startIter + 1
 
     while True:
@@ -331,63 +274,48 @@ def train_system(depthNet, colorNet, netD,depthOptimizer, colorOptimizer, optimi
             print('Performing iteration {}'.format(it))
 
         # main optimization
-        depthNet.train(True)  # Set model to training mode
-        colorNet.train(True)
+        depth_net.train(True)  # Set model to training mode
+        color_net.train(True)
         images, depthFeat, reference, refPos = read_training_data(param.trainingNames[0], True, it)
-        evaluate_system(depthNet, colorNet, netD, depthOptimizer, colorOptimizer, optimizerD,criterion, images, refPos, True, depthFeat,
+        evaluate_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer, criterion, images,
+                        refPos, True, depthFeat,
                         reference, False)
 
         if it % param.testNetIter == 0:
             # save network
             _, curNetName, _ = get_folder_content(param.trainNet, '.tar')
             state = {
-                'depthNet': depthNet.state_dict(),
-                'colorNet': colorNet.state_dict(),
-                'depthOptimizer': depthOptimizer.state_dict(),
-                'colorOptimizer': colorOptimizer.state_dict()
+                'depth_net': depth_net.state_dict(),
+                'color_net': color_net.state_dict(),
+                'd_net': d_net.state_dict(),
+                'depth_optimizer': depth_optimizer.state_dict(),
+                'color_optimizer': color_optimizer.state_dict(),
+                'd_optimizer': d_optimizer.state_dict()
             }
-            torch.save(state, param.trainNet + '/Net-' + str(it) + '.tar')
+            torch.save(state, param.trainNet + '/Net_GAN-' + str(it) + '.tar')
 
             # delete network
             if curNetName:
                 os.remove(curNetName[0])
             # perform validation
-            depthNet.train(False)  # Set model to validation mode
-            colorNet.train(False)
-            print('\nStarting the validation process\n')
-            curError = test_during_training(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, optimizerD,criterion)
+            depth_net.train(False)  # Set model to validation mode
+            color_net.train(False)
+            print('Starting the validation process...',end = '')
+            curError = test_during_training(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer,
+                                            criterion)
             testError.append(curError)
             plt.figure()
             plt.plot(testError)
             plt.title('Current PSNR: %f' % curError)
+            plt.savefig(param.trainNet + '/fig_gan.png')
             plt.show()
 
 
-class PairwiseDistance(nn.Module):
-    def __init__(self, p=2, eps=1e-6):
-        super(PairwiseDistance, self).__init__()
-        self.norm = p
-        self.eps = eps
-
-    def forward(self, x1, x2):
-        return pairwise_distance(x1, x2, self.norm, self.eps)
-
-
-def pairwise_distance(x1, x2, p=2, eps=1e-6):
-    diff = torch.abs(x1 - x2)
-    out = torch.pow(diff + eps, p)
-    return out
-
-
-def train():
-    [depthNet, colorNet, depthOptimizer, colorOptimizer] = load_networks(True)
-    criterion = PairwiseDistance()
-    netD = Discriminator()
-    optimizerD = optim.Adam(netD.parameters())
+def train_gan():
+    [depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer] = load_networks(True)
     generator_criterion = GeneratorLoss()
-
-    train_system(depthNet, colorNet,netD, depthOptimizer, colorOptimizer, optimizerD,generator_criterion)
+    train_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer, generator_criterion)
 
 
 if __name__ == "__main__":
-    train()
+    train_gan()

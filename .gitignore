@@ -6,3 +6,5 @@ __pycache__/
 try.py
 TrainingData/*.tar
 TrainingData/error.txt
+Results/
+!.gitkeep
