@@ -5,6 +5,9 @@ __pycache__/
 .idea/
 try.py
 TrainingData/
+!TrainingData/.gitkeep
 Scenes/
+!Scenes/.gitkeep
 Results/
-!.gitkeep
+!Results/.gitkeep
+.gitignore
