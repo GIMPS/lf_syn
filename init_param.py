@@ -1,6 +1,6 @@
 import os
 import numpy as np
-
+import torch
 def get_folder_content(folderPath,extension='png'):
     contentNames=[]
     contentPaths=[]
@@ -42,10 +42,7 @@ inputView.X = inputView.X.flatten()
 
 ################################################################################
 
-### If you have compiled MatConvNet with GPU and CuDNN supports, then leave
-### these parameters as is. Otherwise change them appropriately.
-param.useGPU = False
-param.gpuMethod = 'Cudnn'#'NoCudnn'#
+param.useGPU = torch.cuda.is_available()
 
 
 ################## Training Parameters #################################
@@ -73,11 +70,11 @@ _, param.testNames, _ = get_folder_content(param.testData, '.h5')
 param.trainNet = 'TrainingData'
 
 
-param.isContinue = True
-param.startIter = -1
+param.isContinue = False
+param.startIter = 0
 
 param.testNetIter = 5
-param.printInfoIter = 5
+param.printInfoIter = 1
 
 
 ### ADAM parameters

@@ -1,3 +1,4 @@
+import argparse
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
@@ -10,13 +11,20 @@ warnings.filterwarnings("ignore")
 import h5py
 import matplotlib.pyplot as plt
 
-
+parser = argparse.ArgumentParser(description='Train Super Resolution Models')
+parser.add_argument('--is_continue', default=False, type=bool, help='if to continue training from existing network')
+opt = parser.parse_args()
+param.isContinue = opt.is_continue
 def load_networks(isTraining=False):
     depth_net = DepthNetModel()
     color_net = ColorNetModel()
+    if param.useGPU:
+        depth_net.cuda()
+        color_net.cuda()
 
     depth_optimizer = optim.Adam(depth_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
     color_optimizer = optim.Adam(color_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
+
 
     if isTraining:
         netFolder = param.trainNet
@@ -246,8 +254,6 @@ def train_system(depth_net, color_net, depth_optimizer, color_optimizer, criteri
     it = param.startIter + 1
 
     while True:
-        it += 1
-
         if it % param.printInfoIter == 0:
             print('Performing iteration {}'.format(it))
 
@@ -276,14 +282,16 @@ def train_system(depth_net, color_net, depth_optimizer, color_optimizer, criteri
             # perform validation
             depth_net.train(False)  # Set model to validation mode
             color_net.train(False)
-            print('Starting the validation process... ',end='')
+            print('Starting the validation process... ',end='',flush=True)
             curError = test_during_training(depth_net, color_net, depth_optimizer, color_optimizer, criterion)
             testError.append(curError)
             plt.figure()
             plt.plot(testError)
             plt.title('Current PSNR: %f' % curError)
             plt.savefig(param.trainNet + '/fig.png')
-            plt.show()
+            # plt.show()
+
+        it += 1
 
 
 class PairwiseDistance(nn.Module):
@@ -305,6 +313,8 @@ def pairwise_distance(x1, x2, p=2, eps=1e-6):
 def train():
     [depth_net, color_net, depth_optimizer, color_optimizer] = load_networks(True)
     criterion = PairwiseDistance()
+    if param.useGPU:
+        criterion.cuda()
     train_system(depth_net, color_net, depth_optimizer, color_optimizer, criterion)
 
 

@@ -1,3 +1,4 @@
+import argparse
 import time
 import warnings
 
@@ -13,11 +14,19 @@ import matplotlib.pyplot as plt
 
 from loss import GeneratorLoss
 
+parser = argparse.ArgumentParser(description='Train Super Resolution Models')
+parser.add_argument('--is_continue', default=False, type=bool, help='if to continue training from existing network')
+opt = parser.parse_args()
+param.isContinue = opt.is_continue
 
 def load_networks(isTraining=False):
     depth_net = DepthNetModel()
     color_net = ColorNetModel()
     d_net = Discriminator()
+    if param.useGPU:
+        depth_net.cuda()
+        color_net.cuda()
+        d_net.cuda()
 
     depth_optimizer = optim.Adam(depth_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2),
                                  eps=param.eps)
@@ -268,8 +277,6 @@ def train_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, 
     it = param.startIter + 1
 
     while True:
-        it += 1
-
         if it % param.printInfoIter == 0:
             print('Performing iteration {}'.format(it))
 
@@ -300,7 +307,7 @@ def train_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, 
             # perform validation
             depth_net.train(False)  # Set model to validation mode
             color_net.train(False)
-            print('Starting the validation process...',end = '')
+            print('Starting the validation process...',end = '', flush=True)
             curError = test_during_training(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer,
                                             criterion)
             testError.append(curError)
@@ -308,12 +315,14 @@ def train_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, 
             plt.plot(testError)
             plt.title('Current PSNR: %f' % curError)
             plt.savefig(param.trainNet + '/fig_gan.png')
-            plt.show()
-
+            # plt.show()
+        it += 1
 
 def train_gan():
     [depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer] = load_networks(True)
     generator_criterion = GeneratorLoss()
+    if param.useGPU:
+        generator_criterion.cuda()
     train_system(depth_net, color_net, d_net, depth_optimizer, color_optimizer, d_optimizer, generator_criterion)
 
 
