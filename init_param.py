@@ -73,8 +73,8 @@ param.trainNet = 'TrainingData'
 param.isContinue = False
 param.startIter = 0
 
-param.testNetIter = 5
-param.printInfoIter = 1
+param.testNetIter = 100
+param.printInfoIter = 5
 
 
 ### ADAM parameters
