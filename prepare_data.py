@@ -6,6 +6,10 @@ from init_param import param, inputView, get_folder_content
 import torch
 import cv2
 from scipy.interpolate import *
+import argparse
+import warnings
+warnings.filterwarnings("ignore")
+import h5py
 
 def make_dir(inputPath):
     if not os.path.exists(inputPath):
@@ -67,13 +71,10 @@ def pad_with_one(input, finalLength):
     return output
 
 
-def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFlag, arraySize=1):
-    import warnings
-    warnings.filterwarnings("ignore")
-    import h5py
-    f = h5py.File(fileName, "a")
+def save_hdf(f, datasetName, input, inDims, startLoc, createFlag, arraySize=1):
+
     if createFlag:
-        dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f', chunks=True)
+        dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f', chunks=tuple(inDims))
     else:
         dset = f.get(datasetName)
 
@@ -87,9 +88,10 @@ def save_hdf(fileName, datasetName, input, inDims, startLoc, chunkSize, createFl
         sliceIdx.append(idx)
     while input.shape[-1] == 1:
         input = input[..., 0]
+
     dset.write_direct(input.astype('float32'), dest_sel=tuple(sliceIdx))  # todo: too slow!!
     startLoc[-1] = startLoc[-1] + inDims[-1]
-    f.close()
+    # f.close()
     return startLoc
 
 
@@ -136,7 +138,7 @@ def rgb2gray(rgb):
 def prepare_depth_features(inputLF, deltaY, deltaX):
     depthResolution = param.depthResolution
     deltaDisparity = param.deltaDisparity
-    ##convert the input rgb light field to grayscale
+    # convert the input rgb light field to grayscale
     (height, width, _, angHeight, angWidth) = inputLF.shape
     grayLF = np.zeros((height, width, angHeight, angWidth))
     for i in range(0, angHeight):
@@ -202,10 +204,7 @@ def im2double(im):
 
 
 def read_illum_images(scenePath):
-    """Read from illum images.
 
-    :return:
-    """
     numImgsX = 14
     numImgsY = 14
     inputImg = cv2.imread(scenePath, -cv2.IMREAD_ANYDEPTH)  # read 16 bit image
@@ -307,9 +306,11 @@ def compute_test_examples(curFullLF, curInputLF):
 
 
 def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, startInd, createFlag, arraySize):
-    chunkSize = 1000
     fileName = outputDir + '/training.h5'
     numElements = refPos.shape[1]
+
+    file = h5py.File(fileName, "a", libver='latest')
+
     for k in range(0, numElements):
         j = k + startInd
 
@@ -317,31 +318,31 @@ def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, 
         curInFeat = inFeat[:, :, :, k]
         curRef = ref[:, :, :, k]
         curRefPos = refPos[:, k]
-        save_hdf(fileName, 'IN', curInImgs.astype('float32'), pad_with_one(curInImgs.shape, 4),
-                 [0, 0, 0, writeOrder[j]], chunkSize, createFlag, arraySize)
-        save_hdf(fileName, 'FT', curInFeat.astype('float32'), pad_with_one(curInFeat.shape, 4),
-                 [0, 0, 0, writeOrder[j]], chunkSize,
+        save_hdf(file, 'IN', curInImgs.astype('float32'), pad_with_one(curInImgs.shape, 4),
+                 [0, 0, 0, writeOrder[j]], createFlag, arraySize)
+        save_hdf(file, 'FT', curInFeat.astype('float32'), pad_with_one(curInFeat.shape, 4),
+                 [0, 0, 0, writeOrder[j]],
                  createFlag, arraySize)
-        save_hdf(fileName, 'GT', curRef.astype('float32'), pad_with_one(curRef.shape, 4), [0, 0, 0, writeOrder[j]],
-                 chunkSize,
+        save_hdf(file, 'GT', curRef.astype('float32'), pad_with_one(curRef.shape, 4), [0, 0, 0, writeOrder[j]],
                  createFlag, arraySize)
-        save_hdf(fileName, 'RP', curRefPos.astype('float32'), pad_with_one(curRefPos.shape, 2), [0, writeOrder[j]],
-                 chunkSize, createFlag,
-                 arraySize)
-        print("writing {} / {}".format(k, numElements))
+        save_hdf(file, 'RP', curRefPos.astype('float32'), pad_with_one(curRefPos.shape, 2), [0, writeOrder[j]],
+                 createFlag, arraySize)
+        print("\b\b\b\b%3d%%" % (k/numElements*100), end='', flush=True)
         createFlag = False
+    print("\b\b\b\bDone")
+    file.close()
     return createFlag
 
 
 def write_test_examples(inImgs, inFeat, ref, refPos, outputDir):
-    chunkSize = 10
     fileName = outputDir + '.h5'
-    save_hdf(fileName, 'IN', inImgs.astype('float32'), pad_with_one(inImgs.shape, 4), [0, 0, 0, 0], chunkSize, True)
-    save_hdf(fileName, 'FT', inFeat.astype('float32'), pad_with_one(inFeat.shape, 4), [0, 0, 0, 0], chunkSize,
-             True)
-    save_hdf(fileName, 'GT', ref.astype('float32'), pad_with_one(ref.shape, 4), [0, 0, 0, 0], chunkSize,
-             True)
-    save_hdf(fileName, 'RP', refPos.astype('float32'), refPos.shape, [0, 0], chunkSize, True)
+    file = h5py.File(fileName, "a", libver='latest')
+    save_hdf(file, 'IN', inImgs.astype('float32'), pad_with_one(inImgs.shape, 4), [0, 0, 0, 0], True)
+    save_hdf(file, 'FT', inFeat.astype('float32'), pad_with_one(inFeat.shape, 4), [0, 0, 0, 0], True)
+    save_hdf(file, 'GT', ref.astype('float32'), pad_with_one(ref.shape, 4), [0, 0, 0, 0], True)
+    save_hdf(file, 'RP', refPos.astype('float32'), refPos.shape, [0, 0], True)
+    file.close()
+    print("Done")
 
 
 def prepare_training_data():
@@ -356,7 +357,7 @@ def prepare_training_data():
 
     for ns in range(0, numScenes):
         print('**********************************')
-        print('Working on the "%s" dataset (%d of %d)' % (sceneNames[ns][0:- 4], ns, numScenes),flush=True)
+        print('Working on the "%s" dataset (%d of %d)' % (sceneNames[ns][0:- 4], ns+1, numScenes),flush=True)
 
         print('Loading input light field ...',end = ' ')
         curFullLF, curInputLF = read_illum_images(scenePaths[ns])
@@ -367,7 +368,7 @@ def prepare_training_data():
         print('------------------------------')
         [pInImgs, pInFeat, pRef, refPos] = compute_training_examples(curFullLF, curInputLF)
 
-        print('Writing training examples\n')
+        print('Writing training examples...', end='    ',flush=True)
         firstBatch = write_training_examples(pInImgs, pInFeat, pRef, refPos, outputFolder, writeOrder,
                                              ns * numPatches * param.numRefs, firstBatch, numTotalPatches)
 
@@ -392,10 +393,20 @@ def prepare_test_data():
         print('------------------------------')
         [pInImgs, pInFeat, pRef, refPos] = compute_test_examples(curFullLF, curInputLF)
 
-        print('Writing test examples\n')
+        print('Writing test examples...',end='', flush=True)
         write_test_examples(pInImgs, pInFeat, pRef, refPos, curOutputName)
 
 
 if __name__ == "__main__":
-    prepare_test_data()
-    prepare_training_data()
+    parser = argparse.ArgumentParser(description='Process Light Field Images')
+    parser.add_argument('--dataset', default='both', type=str, choices=['test', 'train', 'both'],
+                        help='choose dataset to process')
+    opt = parser.parse_args()
+    dataset = opt.dataset
+    if dataset == 'test':
+        prepare_test_data()
+    elif dataset == 'train':
+        prepare_training_data()
+    elif dataset == 'both':
+        prepare_test_data()
+        prepare_training_data()
