@@ -2,7 +2,7 @@
 A PyTorch implementation of a LF Camera View Synthesis method proposed by SIGGRAPH Asia 2016 paper [Learning-Based View Synthesis for Light Field Cameras](http://cseweb.ucsd.edu/~viscomp/projects/LF/papers/SIGASIA16/).
 ## Requirments
 - Python 3.x
-- CUDA 8.0
+- CUDA
 
 ## Other dependencies
 - Pytorch
@@ -38,6 +38,8 @@ to be created first.
 ```
 python3 prepare_data.py
 
+optional arguments:
+--dataset                       choose which dataset to process
 ``` 
 Then start the training
 ```
