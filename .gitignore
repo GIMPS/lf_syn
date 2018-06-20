@@ -5,6 +5,8 @@ __pycache__/
 .idea/
 try.py
 TrainingData/*
+!TrainingData/Test/
+!TrainingData/Training/
 Scenes/*
 Results/*
 !.gitkeep
