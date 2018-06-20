@@ -1,19 +1,24 @@
+import argparse
 import os
 import os.path
-import numpy as np
-from math import floor
-from init_param import param, inputView, get_folder_content
-import torch
-import cv2
-from scipy.interpolate import *
-import argparse
 import warnings
+from math import floor
+
+import cv2
+import numpy as np
+import torch
+from scipy.interpolate import *
+
+from init_param import param, inputView, get_folder_content
+
 warnings.filterwarnings("ignore")
 import h5py
+
 
 def make_dir(inputPath):
     if not os.path.exists(inputPath):
         os.makedirs(inputPath)
+
 
 def crop_img(input, pad):
     return input[pad:- pad, pad: - pad]
@@ -26,8 +31,8 @@ def get_patches(input, patchSize, stride):
     patches = np.zeros((patchSize, patchSize, depth, numPatches))
 
     count = -1
-    for iX in np.arange(0, width - patchSize+1, stride):
-        for iY in np.arange(0, height - patchSize+1, stride):
+    for iX in np.arange(0, width - patchSize + 1, stride):
+        for iY in np.arange(0, height - patchSize + 1, stride):
             count = count + 1
             patches[:, :, :, count] = input[iY: iY + patchSize, iX: iX + patchSize, :]
     return patches
@@ -72,7 +77,6 @@ def pad_with_one(input, finalLength):
 
 
 def save_hdf(f, datasetName, input, inDims, startLoc, createFlag, arraySize=1):
-
     if createFlag:
         dset = f.create_dataset(datasetName, (*inDims[0:- 1], arraySize), dtype='f', chunks=tuple(inDims))
     else:
@@ -91,7 +95,6 @@ def save_hdf(f, datasetName, input, inDims, startLoc, createFlag, arraySize=1):
 
     dset.write_direct(input.astype('float32'), dest_sel=tuple(sliceIdx))  # todo: too slow!!
     startLoc[-1] = startLoc[-1] + inDims[-1]
-    # f.close()
     return startLoc
 
 
@@ -172,7 +175,7 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
         correspStack[:, :, indDepth] = corresp_response(shearedLF)
 
         if (indDepth + 1) % 10 == 0:
-            print('\b\b\b%d%%'%( (indDepth + 1) / depthResolution * 100),end='',flush=True)
+            print('\b\b\b%d%%' % ((indDepth + 1) / depthResolution * 100), end='', flush=True)
 
         indDepth = indDepth + 1
 
@@ -180,21 +183,24 @@ def prepare_depth_features(inputLF, deltaY, deltaX):
     featuresStack[:, :, 100: 200] = correspStack.astype('float32')
     return featuresStack
 
+
 def isnan(x):
     return x != x
+
 
 def prepare_color_features(depth, images, refPos):
     images = crop_img(images, param.depthBorder)
     warpedImages = warp_all_images(images, depth, refPos)
-    warpedImages=torch.from_numpy(warpedImages)
+    warpedImages = torch.from_numpy(warpedImages)
     if param.useGPU:
-        warpedImages=warpedImages.cuda()
+        warpedImages = warpedImages.cuda()
     warpedImages = warpedImages.float()
     indNan = isnan(warpedImages)
     warpedImages[indNan] = 0
     [h, w, _, _] = depth.shape
     refPos = refPos.view(2, 1, 1, -1)
-    colorFeatures = torch.cat((depth, warpedImages, (refPos[0, :, :, :] - 1.5).repeat(h, w, 1, 1), (refPos[1, :, :, :] - 1.5).repeat(h, w, 1, 1)), 2)
+    colorFeatures = torch.cat((depth, warpedImages, (refPos[0, :, :, :] - 1.5).repeat(h, w, 1, 1),
+                               (refPos[1, :, :, :] - 1.5).repeat(h, w, 1, 1)), 2)
     return colorFeatures, indNan
 
 
@@ -204,7 +210,6 @@ def im2double(im):
 
 
 def read_illum_images(scenePath):
-
     numImgsX = 14
     numImgsY = 14
     inputImg = cv2.imread(scenePath, -cv2.IMREAD_ANYDEPTH)  # read 16 bit image
@@ -233,26 +238,26 @@ def compute_training_examples(curFullLF, curInputLF):
     stride = param.stride
     origAngRes = param.origAngRes
 
-    #########preparing input images
+    # preparing input images
     height, width, _, _, _ = curInputLF.shape
     inImgs = curInputLF.reshape((height, width, -1))
 
     inImgs = crop_img(inImgs, cropSize)
     pInImgs = get_patches(inImgs, patchSize, stride)
     pInImgs = np.tile(pInImgs, (1, 1, 1, numRefs))
-    ####selecting random references
+    # selecting random references
 
     numSeq = np.random.permutation(origAngRes ** 2)
     refInds = numSeq[0:numRefs]
 
-    ##########initializing the arrays
+    # initializing the arrays
     numPatches = get_num_patches()
     pInFeat = np.zeros((patchSize, patchSize, param.numDepthFeatureChannels, numPatches * numRefs))
     pRef = np.zeros((patchSize, patchSize, 3, numPatches * numRefs))
     refPos = np.zeros((2, numPatches * numRefs))
 
     for ri in range(0, numRefs):
-        print('Working on random reference %d of %d:' % (ri + 1, numRefs),end='   ')
+        print('Working on random reference %d of %d:' % (ri + 1, numRefs), end='   ')
         curRefPos = type('', (), {})()
         curRefInd = type('', (), {})()
         [curRefInd.Y, curRefInd.X] = np.unravel_index(refInds[ri], [origAngRes, origAngRes], 'F')
@@ -263,13 +268,13 @@ def compute_training_examples(curFullLF, curInputLF):
         ref = curFullLF[:, :, :, curRefInd.Y, curRefInd.X]
         ref = crop_img(ref, cropSize)
         pRef[:, :, :, wInds] = get_patches(ref, patchSize, stride)
-        ## preparing features
+        # preparing features
         deltaViewY = inputView.Y - curRefPos.Y
         deltaViewX = inputView.X - curRefPos.X
         inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
         inFeat = crop_img(inFeat, cropSize)
         pInFeat[:, :, :, wInds] = get_patches(inFeat, patchSize, stride)
-        ## preparing ref positions
+        # preparing ref positions
         refPos[0, wInds] = np.tile(curRefPos.Y, (1, numPatches))
         refPos[1, wInds] = np.tile(curRefPos.X, (1, numPatches))
         print('\b\b\b\bDone', flush=True)
@@ -277,7 +282,7 @@ def compute_training_examples(curFullLF, curInputLF):
 
 
 def compute_test_examples(curFullLF, curInputLF):
-    #########preparing input images
+    # preparing input images
     [height, width, _, _, _] = curInputLF.shape
     inImgs = curInputLF.reshape((height, width, -1))
 
@@ -288,20 +293,20 @@ def compute_test_examples(curFullLF, curInputLF):
     curRefPos.Y = get_img_pos(curRefInd.Y)
     curRefPos.X = get_img_pos(curRefInd.X)
 
-    print('Working on reference (5, 5):',end='   ')
+    print('Working on reference (5, 5):', end='   ')
 
     # preparing reference
     ref = curFullLF[:, :, :, curRefInd.Y, curRefInd.X]
 
-    ## preparing features
+    # preparing features
     deltaViewY = inputView.Y - curRefPos.Y
     deltaViewX = inputView.X - curRefPos.X
     inFeat = prepare_depth_features(curInputLF, deltaViewY, deltaViewX)
 
-    ## preparing ref positions
+    # preparing ref positions
     refPos = np.array([[curRefPos.Y], [curRefPos.X]])
 
-    print('\b\b\b\bDone',flush=True)
+    print('\b\b\b\bDone', flush=True)
     return inImgs, inFeat, ref, refPos
 
 
@@ -327,7 +332,7 @@ def write_training_examples(inImgs, inFeat, ref, refPos, outputDir, writeOrder, 
                  createFlag, arraySize)
         save_hdf(file, 'RP', curRefPos.astype('float32'), pad_with_one(curRefPos.shape, 2), [0, writeOrder[j]],
                  createFlag, arraySize)
-        print("\b\b\b\b%3d%%" % (k/numElements*100), end='', flush=True)
+        print("\b\b\b\b%3d%%" % (k / numElements * 100), end='', flush=True)
         createFlag = False
     print("\b\b\b\bDone")
     file.close()
@@ -357,9 +362,9 @@ def prepare_training_data():
 
     for ns in range(0, numScenes):
         print('**********************************')
-        print('Working on the "%s" dataset (%d of %d)' % (sceneNames[ns][0:- 4], ns+1, numScenes),flush=True)
+        print('Working on the "%s" dataset (%d of %d)' % (sceneNames[ns][0:- 4], ns + 1, numScenes), flush=True)
 
-        print('Loading input light field ...',end = ' ')
+        print('Loading input light field ...', end=' ')
         curFullLF, curInputLF = read_illum_images(scenePaths[ns])
         print('Done')
         print('**********************************')
@@ -368,7 +373,7 @@ def prepare_training_data():
         print('------------------------------')
         [pInImgs, pInFeat, pRef, refPos] = compute_training_examples(curFullLF, curInputLF)
 
-        print('Writing training examples...', end='    ',flush=True)
+        print('Writing training examples...', end='    ', flush=True)
         firstBatch = write_training_examples(pInImgs, pInFeat, pRef, refPos, outputFolder, writeOrder,
                                              ns * numPatches * param.numRefs, firstBatch, numTotalPatches)
 
@@ -382,9 +387,9 @@ def prepare_test_data():
         curOutputName = outputFolder + '/' + sceneNames[ns][0: - 4]
 
         print('**********************************')
-        print('Working on the "%s" dataset (%d of %d)' % (sceneNames[ns][0:- 4], ns, numScenes),flush=True)
+        print('Working on the "%s" dataset (%d of %d)' % (sceneNames[ns][0:- 4], ns, numScenes), flush=True)
 
-        print('Loading input light field ...',end = ' ')
+        print('Loading input light field ...', end=' ')
         [curFullLF, curInputLF] = read_illum_images(scenePaths[ns])
         print('Done')
         print('**********************************')
@@ -393,7 +398,7 @@ def prepare_test_data():
         print('------------------------------')
         [pInImgs, pInFeat, pRef, refPos] = compute_test_examples(curFullLF, curInputLF)
 
-        print('Writing test examples...',end='', flush=True)
+        print('Writing test examples...', end='', flush=True)
         write_test_examples(pInImgs, pInFeat, pRef, refPos, curOutputName)
 
 
