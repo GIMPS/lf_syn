@@ -93,13 +93,12 @@ def save_hdf(f, datasetName, input, inDims, startLoc, createFlag, arraySize=1):
     while input.shape[-1] == 1:
         input = input[..., 0]
 
-    dset.write_direct(input.astype('float32'), dest_sel=tuple(sliceIdx))  # todo: too slow!!
+    dset.write_direct(input.astype('float32'), dest_sel=tuple(sliceIdx))
     startLoc[-1] = startLoc[-1] + inDims[-1]
     return startLoc
 
 
 def warp_images(disparity, input, delY, delX):
-    input = input.numpy()
     [h, w, _, numImages] = disparity.shape
     X = np.arange(0, w, dtype='float')
     Y = np.arange(0, h, dtype='float')
@@ -121,6 +120,9 @@ def warp_images(disparity, input, delY, delX):
 
 
 def warp_all_images(images, depth, refPos):
+    images = images.cpu().numpy()
+    depth = depth.cpu().numpy()
+    refPos = refPos.cpu().numpy()
     [h, w, c, numImages] = images.shape
     numInputViews = len(inputView.Y)
 
