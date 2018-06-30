@@ -10,7 +10,6 @@ A PyTorch implementation of a LF Camera View Synthesis method proposed by SIGGRA
 - scipy
 - numpy
 - scikit-image
-- matplotlib
 - h5py
 ```angular2html
 pip3 install -r requirments.txt
@@ -57,3 +56,21 @@ can be found in `TestSet\PAPER` directory.
 python3 test.py
 ```
 The output images and objective quality result are in `Results` directory.
+
+## Results
+
+> Original model (iteration: 26,500; Training PSNR: 33.36 ):
+
+- Seahorse (PSNR: 29.10; SSIM: 0.952)
+
+![n_Seahorse](https://thumbs.gfycat.com/AggravatingSomberConey-size_restricted.gif)
+
+- Flower1 (PSNR: 29.86; SSIM: 0.945)
+
+![n_Flower1](https://thumbs.gfycat.com/MixedAstonishingAndeancat-size_restricted.gif)
+
+## To do list:
+- Move `prepare_data.py` onto GPU
+
+   This will make training and testing tremendously faster. The key is to implement a cubic `interpolation` method with PyToch tensors to replace the Scipy one.
+
