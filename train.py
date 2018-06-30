@@ -1,20 +1,22 @@
-import argparse
+import time
+from math import log10
+
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-import time
+
 from model import DepthNetModel, ColorNetModel
 from prepare_data import *
-import warnings
 
 warnings.filterwarnings("ignore")
 import h5py
-import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='Train Super Resolution Models')
 parser.add_argument('--is_continue', default=False, type=bool, help='if to continue training from existing network')
 opt = parser.parse_args()
 param.isContinue = opt.is_continue
+
+
 def load_networks(isTraining=False):
     depth_net = DepthNetModel()
     color_net = ColorNetModel()
@@ -22,9 +24,10 @@ def load_networks(isTraining=False):
         depth_net.cuda()
         color_net.cuda()
 
-    depth_optimizer = optim.Adam(depth_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
-    color_optimizer = optim.Adam(color_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2), eps=param.eps)
-
+    depth_optimizer = optim.Adam(depth_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2),
+                                 eps=param.eps)
+    color_optimizer = optim.Adam(color_net.parameters(), lr=param.alpha, betas=(param.beta1, param.beta2),
+                                 eps=param.eps)
 
     if isTraining:
         netFolder = param.trainNet
@@ -130,7 +133,7 @@ def evaluate_system(depth_net, color_net, depth_optimizer=None, color_optimizer=
     if not isTraining:
         print("Estimating depth")
         print("----------------")
-        print("Extracting depth features...",end ='   ')
+        print("Extracting depth features...", end='   ')
         dfTime = time.time()
         deltaY = inputView.Y - refPos[0]
         deltaX = inputView.X - refPos[1]
@@ -142,20 +145,20 @@ def evaluate_system(depth_net, color_net, depth_optimizer=None, color_optimizer=
 
         print('\b\b\b\bDone in {:.0f} seconds'.format(time.time() - dfTime))
     if not isTraining:
-        print('Evaluating depth network ...',end='')
+        print('Evaluating depth network ...', end='')
         dTime = time.time()
-    depthFeatures = depthFeatures.permute(3, 2, 0, 1)  # todo
+    depthFeatures = depthFeatures.permute(3, 2, 0, 1)
     depthFeatures = Variable(depthFeatures, requires_grad=True)
     depthRes = depth_net(depthFeatures)
     depth = depthRes / (param.origAngRes - 1)
     depth = depth.data
-    depth = depth.permute(2, 3, 1, 0)  # todo
+    depth = depth.permute(2, 3, 1, 0)
     if not isTraining:
-        print('Done in {:.0f} seconds'.format(time.time() - dTime),flush=True)
+        print('Done in {:.0f} seconds'.format(time.time() - dTime), flush=True)
 
     # Estimating the final color (section 3.2)
     if not isTraining:
-        print("Preparing color features ...",end='')
+        print("Preparing color features ...", end='')
         cfTime = time.time()
 
         images = images.reshape((images.shape[0], images.shape[1], -1))
@@ -168,25 +171,27 @@ def evaluate_system(depth_net, color_net, depth_optimizer=None, color_optimizer=
         print('Done in {:.0f} seconds'.format(time.time() - cfTime))
 
     if not isTraining:
-        print('Evaluating color network ...',end='')
+        print('Evaluating color network ...', end='')
         cfTime = time.time()
-    colorFeatures = colorFeatures.permute(3, 2, 0, 1)  # todo
+    colorFeatures = colorFeatures.permute(3, 2, 0, 1)
     colorFeatures = Variable(colorFeatures, requires_grad=True)
     colorRes = color_net(colorFeatures)
 
     finalImg = colorRes
-    finalImg = np.transpose(finalImg.data.numpy(), (2, 3, 1, 0))
+    finalImg = finalImg.data.permute(2, 3, 1, 0)
 
     if not isTraining:
         print('Done in {:.0f} seconds'.format(time.time() - cfTime))
     # Backpropagation
     if isTraining and not isTestDuringTraining:
-        loss = criterion(colorRes, Variable(reference.permute(3, 2, 0, 1))) / reference.numpy().size
+        loss = criterion(colorRes, Variable(reference.permute(3, 2, 0, 1))) / reference.cpu().numpy().size
 
         depth_optimizer.zero_grad()
         color_optimizer.zero_grad()
-
-        loss.backward(torch.ones(10, 3, 36, 36))
+        if param.useGPU:
+            loss.backward(torch.ones(10, 3, 36, 36).cuda())
+        else:
+            loss.backward(torch.ones(10, 3, 36, 36))
 
         dzdx = colorFeatures.grad
         dzdx = dzdx.data.permute(2, 3, 1, 0)
@@ -204,9 +209,9 @@ def evaluate_system(depth_net, color_net, depth_optimizer=None, color_optimizer=
 
 
 def compute_psnr(input, ref):
-    numPixels = input.size
-    sqrdErr = np.sum((input[:] - ref[:]) ** 2) / numPixels
-    errEst = 10 * np.log10(1 / sqrdErr)
+    numPixels = input.numel()
+    sqrdErr = torch.sum((input[:] - ref[:]) ** 2) / numPixels
+    errEst = 10 * log10(1 / sqrdErr)
     return errEst
 
 
@@ -224,7 +229,6 @@ def test_during_training(depth_net, color_net, depth_optimizer, color_optimizer,
                                    True,
                                    depthFeatures, reference, True)
 
-        reference = reference.numpy()
         finalImg = crop_img(finalImg, 10)
         reference = crop_img(reference, 10)
 
@@ -282,14 +286,12 @@ def train_system(depth_net, color_net, depth_optimizer, color_optimizer, criteri
             # perform validation
             depth_net.train(False)  # Set model to validation mode
             color_net.train(False)
-            print('Starting the validation process... ',end='',flush=True)
+            print('Starting the validation process... ', end='', flush=True)
             curError = test_during_training(depth_net, color_net, depth_optimizer, color_optimizer, criterion)
             testError.append(curError)
-            plt.figure()
-            plt.plot(testError)
-            plt.title('Current PSNR: %f' % curError)
-            plt.savefig(param.trainNet + '/fig.png')
-            # plt.show()
+            # plt.plot(testError)
+            # plt.title('Current PSNR: %f' % curError)
+            # plt.savefig(param.trainNet + '/fig.png')
 
         it += 1
 
